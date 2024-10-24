@@ -1,4 +1,12 @@
 services:
+  certs:
+    image: alpine/openssl:3.3.2
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /certs
+    entrypoint: /certs/generate-certs.sh
+
   ldap:
     image: bitnami/openldap:2.5.18
     ports:
@@ -15,6 +23,9 @@ services:
         source: ./certs
         target: /certs
         read_only: true
+    depends_on:
+      certs:
+        condition: 'service_completed_successfully'
 
   test-setup:
     image: famedly/famedly-sync-testenv
