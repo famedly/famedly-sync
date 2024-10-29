@@ -1,14 +1,11 @@
 //! LDAP source for syncing with Famedly's Zitadel.
 
-use std::{
-	fmt::Display,
-	path::{Path, PathBuf},
-};
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use ldap_poller::{
-	config::TLSConfig, ldap::EntryStatus, ldap3::SearchEntry, AttributeConfig, Cache, CacheMethod,
+	config::TLSConfig, ldap::EntryStatus, ldap3::SearchEntry, AttributeConfig, CacheMethod,
 	ConnectionConfig, Ldap, SearchEntryExt, Searches,
 };
 use serde::Deserialize;
@@ -17,17 +14,12 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use url::Url;
 
 use super::Source;
-use crate::{
-	user::{StringOrBytes, User},
-	zitadel::{ChangedUser, SourceDiff, UserId},
-};
+use crate::user::{StringOrBytes, User};
 
 /// LDAP sync source
 pub struct LdapSource {
 	/// LDAP configuration
 	ldap_config: LdapSourceConfig,
-	/// Dry run flag (prevents writing cache)
-	is_dry_run: bool,
 }
 
 #[async_trait]
@@ -36,74 +28,44 @@ impl Source for LdapSource {
 		"LDAP"
 	}
 
-	async fn get_diff(&self) -> Result<SourceDiff> {
-		let cache = read_cache(&self.ldap_config.cache_path).await?;
-		let (mut ldap_client, ldap_receiver) = Ldap::new(self.ldap_config.clone().into(), cache);
-
-		let is_dry_run = self.is_dry_run;
-		let cache_path = self.ldap_config.cache_path.clone();
+	async fn get_sorted_users(&self) -> Result<Vec<User>> {
+		let (mut ldap_client, ldap_receiver) = Ldap::new(self.ldap_config.clone().into(), None);
 
 		let sync_handle: tokio::task::JoinHandle<Result<_>> = tokio::spawn(async move {
 			ldap_client.sync_once(None).await.context("failed to sync/fetch data from LDAP")?;
-
-			if is_dry_run {
-				tracing::warn!("Not writing ldap cache during a dry run");
-			} else {
-				let cache = ldap_client.persist_cache().await;
-				tokio::fs::write(
-					&cache_path,
-					bincode::serialize(&cache).context("failed to serialize cache")?,
-				)
-				.await
-				.context("failed to write cache")?;
-			}
-
 			tracing::info!("Finished syncing LDAP data");
-
 			Ok(())
 		});
 
-		let (added, changed, removed) = self.get_user_changes(ldap_receiver).await?;
-
+		let mut added = self.get_user_changes(ldap_receiver).await?;
 		sync_handle.await??;
 
-		Ok(SourceDiff {
-			new_users: added,
-			changed_users: changed.into_iter().map(|(old, new)| ChangedUser { old, new }).collect(),
-			deleted_user_ids: removed,
-		})
+		// TODO: Find out if we can use the AD extension for receiving sorted data
+		added.sort_by(|a, b| a.external_user_id.cmp(&b.external_user_id));
+
+		Ok(added)
 	}
 }
 
 impl LdapSource {
 	/// Create a new LDAP source
-	pub fn new(ldap_config: LdapSourceConfig, is_dry_run: bool) -> Self {
-		Self { ldap_config, is_dry_run }
+	pub fn new(ldap_config: LdapSourceConfig) -> Self {
+		Self { ldap_config }
 	}
 
 	/// Get user changes from an ldap receiver
 	pub async fn get_user_changes(
 		&self,
 		ldap_receiver: Receiver<EntryStatus>,
-	) -> Result<(Vec<User>, Vec<(User, User)>, Vec<UserId>)> {
+	) -> Result<Vec<User>> {
 		ReceiverStream::new(ldap_receiver)
-			.fold(Ok((vec![], vec![], vec![])), |acc, entry_status| {
-				let (mut added, mut changed, mut removed) = acc?;
-				match entry_status {
-					EntryStatus::New(entry) => {
-						tracing::debug!("New entry: {:?}", entry);
-						added.push(self.parse_user(entry)?);
-					}
-					EntryStatus::Changed { old, new } => {
-						tracing::debug!("Changes found for {:?} -> {:?}", old, new);
-						changed.push((self.parse_user(old)?, self.parse_user(new)?));
-					}
-					EntryStatus::Removed(entry) => {
-						tracing::debug!("Deleted user {}", String::from_utf8_lossy(&entry));
-						removed.push(UserId::Nick(String::from_utf8(entry.clone())?));
-					}
+			.fold(Ok(vec![]), |acc, entry_status| {
+				let mut added = acc?;
+				if let EntryStatus::New(entry) = entry_status {
+					tracing::debug!("New entry: {:?}", entry);
+					added.push(self.parse_user(entry)?);
 				};
-				Ok((added, changed, removed))
+				Ok(added)
 			})
 			.await
 	}
@@ -137,7 +99,7 @@ impl LdapSource {
 		Ok(User {
 			first_name,
 			last_name,
-			preferred_username,
+			preferred_username: Some(preferred_username),
 			email,
 			external_user_id: ldap_user_id,
 			phone,
@@ -171,21 +133,6 @@ fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Resul
 	bail!("missing `{}` values for `{}`", attribute, entry.dn)
 }
 
-/// Read the ldap sync cache
-pub async fn read_cache(path: &Path) -> Result<Option<Cache>> {
-	Ok(match tokio::fs::read(path).await {
-		Ok(data) => Some(bincode::deserialize(&data).context("cache deserialization failed")?),
-		Err(err) => {
-			if err.kind() == std::io::ErrorKind::NotFound {
-				tracing::info!("LDAP sync cache missing");
-				None
-			} else {
-				bail!(err)
-			}
-		}
-	})
-}
-
 /// LDAP-specific configuration
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LdapSourceConfig {
@@ -213,8 +160,6 @@ pub struct LdapSourceConfig {
 	pub use_attribute_filter: bool,
 	/// TLS-related configuration
 	pub tls: Option<LdapTlsConfig>,
-	/// Where to cache the last known LDAP state
-	pub cache_path: PathBuf,
 }
 
 impl From<LdapSourceConfig> for ldap_poller::Config {
@@ -264,7 +209,7 @@ impl From<LdapSourceConfig> for ldap_poller::Config {
 					attributes.phone.get_name(),
 				],
 			},
-			cache_method: CacheMethod::ModificationTime,
+			cache_method: CacheMethod::Disabled,
 			check_for_deleted_entries: cfg.check_for_deleted_entries,
 		}
 	}
@@ -409,7 +354,6 @@ mod tests {
               server_certificate: ./tests/environment/certs/server.crt
               danger_disable_tls_verify: false
               danger_use_start_tls: false
-            cache_path: ./test
 
         feature_flags: []
 	"#};
@@ -460,8 +404,7 @@ mod tests {
 	async fn test_get_user_changes_new_and_changed() {
 		let (tx, rx) = mpsc::channel(32);
 		let config = load_config();
-		let ldap_source =
-			LdapSource { ldap_config: config.sources.ldap.unwrap(), is_dry_run: false };
+		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
 
 		let mut user = new_user();
 
@@ -500,26 +443,15 @@ mod tests {
 		let result = ldap_source.get_user_changes(rx).await;
 
 		assert!(result.is_ok(), "Failed to get user changes: {:?}", result);
-		let (added, changed, removed) = result.unwrap();
+		let added = result.unwrap();
 		assert_eq!(added.len(), 1, "Unexpected number of added users");
-		assert_eq!(changed.len(), 1, "Unexpected number of changed users");
-		assert_eq!(removed.len(), 0, "Unexpected number of removed users");
-
-		// Verify the changes
-		let changed_user_entry = &changed[0].1;
-		assert_eq!(
-			changed_user_entry.email,
-			StringOrBytes::String("newemail@example.com".to_owned())
-		);
-		assert_eq!(changed_user_entry.phone, Some(StringOrBytes::String("987654321".to_owned())));
 	}
 
 	#[tokio::test]
 	async fn test_get_user_changes_removed() {
 		let (tx, rx) = mpsc::channel(32);
 		let config = load_config();
-		let ldap_source =
-			LdapSource { ldap_config: config.sources.ldap.unwrap(), is_dry_run: false };
+		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
 
 		let user = new_user();
 
@@ -541,17 +473,14 @@ mod tests {
 		let result = ldap_source.get_user_changes(rx).await;
 
 		assert!(result.is_ok(), "Failed to get user changes: {:?}", result);
-		let (added, changed, removed) = result.unwrap();
+		let added = result.unwrap();
 		assert_eq!(added.len(), 1, "Unexpected number of added users");
-		assert_eq!(changed.len(), 0, "Unexpected number of changed users");
-		assert_eq!(removed.len(), 1, "Unexpected number of removed users");
 	}
 
 	#[tokio::test]
 	async fn test_parse_user() {
 		let config = load_config();
-		let ldap_source =
-			LdapSource { ldap_config: config.sources.ldap.unwrap(), is_dry_run: false };
+		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
 
 		let entry = SearchEntry {
 			dn: "uid=testuser,ou=testorg,dc=example,dc=org".to_owned(),
@@ -564,10 +493,10 @@ mod tests {
 		let user = result.unwrap();
 		assert_eq!(user.first_name, StringOrBytes::String("Test".to_owned()));
 		assert_eq!(user.last_name, StringOrBytes::String("User".to_owned()));
-		assert_eq!(user.preferred_username, StringOrBytes::String("testuser".to_owned()));
+		assert_eq!(user.preferred_username, Some(StringOrBytes::String("testuser".to_owned())));
 		assert_eq!(user.email, StringOrBytes::String("testuser@example.com".to_owned()));
 		assert_eq!(user.phone, Some(StringOrBytes::String("123456789".to_owned())));
-		assert_eq!(user.preferred_username, StringOrBytes::String("testuser".to_owned()));
+		assert_eq!(user.preferred_username, Some(StringOrBytes::String("testuser".to_owned())));
 		assert_eq!(user.external_user_id, StringOrBytes::String("testuser".to_owned()));
 		assert!(user.enabled);
 	}

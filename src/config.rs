@@ -6,17 +6,11 @@ use std::{
 
 use anyhow::{bail, Result};
 use serde::Deserialize;
-use tracing::{error, warn};
 use url::Url;
 
 use crate::{
-	sources::{
-		csv::{CsvSource, CsvSourceConfig},
-		ldap::{LdapSource, LdapSourceConfig},
-		ukt::{UktSource, UktSourceConfig},
-		Source,
-	},
-	zitadel::{Zitadel, ZitadelConfig},
+	sources::{csv::CsvSourceConfig, ldap::LdapSourceConfig, ukt::UktSourceConfig},
+	zitadel::ZitadelConfig,
 };
 
 /// App prefix for env var configuration
@@ -75,62 +69,6 @@ impl Config {
 		self.zitadel.url = validate_zitadel_url(self.zitadel.url)?;
 
 		Ok(self)
-	}
-
-	/// Perform a sync operation
-	pub async fn perform_sync(&self) -> Result<()> {
-		if !self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
-			anyhow::bail!("Non-SSO configuration is currently not supported");
-		}
-
-		let mut sources: Vec<Box<dyn Source + Send + Sync>> = Vec::new();
-
-		if let Some(ldap_config) = &self.sources.ldap {
-			let ldap = LdapSource::new(
-				ldap_config.clone(),
-				self.feature_flags.is_enabled(FeatureFlag::DryRun),
-			);
-			sources.push(Box::new(ldap));
-		}
-
-		if let Some(ukt_config) = &self.sources.ukt {
-			let ukt = UktSource::new(ukt_config.clone());
-			sources.push(Box::new(ukt));
-		}
-
-		if let Some(csv_config) = &self.sources.csv {
-			let csv = CsvSource::new(csv_config.clone());
-			sources.push(Box::new(csv));
-		}
-
-		// Setup Zitadel client
-		let zitadel = Zitadel::new(self).await?;
-
-		// Sync from each available source
-		for source in sources.iter() {
-			let diff = match source.get_diff().await {
-				Ok(diff) => diff,
-				Err(e) => {
-					error!("Failed to get diff from {}: {:?}", source.get_name(), e);
-					continue;
-				}
-			};
-
-			if !self.feature_flags.is_enabled(FeatureFlag::DeactivateOnly) {
-				if let Err(e) = zitadel.import_new_users(diff.new_users).await {
-					warn!("Failed to import new users from {}: {:?}", source.get_name(), e);
-				}
-				if let Err(e) = zitadel.delete_users_by_id(diff.deleted_user_ids).await {
-					warn!("Failed to delete users from {}: {:?}", source.get_name(), e);
-				}
-			}
-
-			if let Err(e) = zitadel.update_users(diff.changed_users).await {
-				warn!("Failed to update users from {}: {:?}", source.get_name(), e);
-			}
-		}
-
-		Ok(())
 	}
 }
 
@@ -306,7 +244,7 @@ mod tests {
 
 	#[test]
 	fn test_config_from_file() {
-		let tempdir = TempDir::new().expect("failed to initialize cache dir");
+		let tempdir = TempDir::new().expect("failed to initialize tempdir");
 		let file_path = create_config_file(tempdir.path());
 		let config = Config::new(file_path.as_path()).expect("Failed to create config object");
 
@@ -315,7 +253,7 @@ mod tests {
 
 	#[test]
 	fn test_config_env_var_override() {
-		let tempdir = TempDir::new().expect("failed to initialize cache dir");
+		let tempdir = TempDir::new().expect("failed to initialize tempdir");
 		let file_path = create_config_file(tempdir.path());
 
 		let env_var_name = format!("{ENV_VAR_CONFIG_PREFIX}__FEATURE_FLAGS");
@@ -352,7 +290,7 @@ mod tests {
 
 	#[test]
 	fn test_config_env_var_feature_flag() {
-		let tempdir = TempDir::new().expect("failed to initialize cache dir");
+		let tempdir = TempDir::new().expect("failed to initialize tempdir");
 		let file_path = create_config_file(tempdir.path());
 
 		let env_var_name = format!("{ENV_VAR_CONFIG_PREFIX}__FEATURE_FLAGS");

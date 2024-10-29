@@ -8,7 +8,7 @@ use csv::Reader;
 use serde::Deserialize;
 
 use super::Source;
-use crate::{user::User, zitadel::SourceDiff};
+use crate::user::User;
 
 /// CSV Source
 pub struct CsvSource {
@@ -22,12 +22,10 @@ impl Source for CsvSource {
 		"CSV"
 	}
 
-	async fn get_diff(&self) -> Result<SourceDiff> {
-		let new_users = self.read_csv()?;
-		// TODO: Implement changed and deleted users
-		// Holding off on this until we get rid of the cache concept
-		// https://github.com/famedly/famedly-sync/issues/53
-		return Ok(SourceDiff { new_users, changed_users: vec![], deleted_user_ids: vec![] });
+	async fn get_sorted_users(&self) -> Result<Vec<User>> {
+		let mut new_users = self.read_csv()?;
+		new_users.sort_by(|a, b| a.external_user_id.cmp(&b.external_user_id));
+		return Ok(new_users);
 	}
 }
 
@@ -80,7 +78,7 @@ impl CsvData {
 			first_name: csv_data.first_name.into(),
 			last_name: csv_data.last_name.into(),
 			phone: if csv_data.phone.is_empty() { None } else { Some(csv_data.phone.into()) },
-			preferred_username: csv_data.email.clone().into(),
+			preferred_username: Some(csv_data.email.clone().into()),
 			external_user_id: csv_data.email.into(),
 			enabled: true,
 		}

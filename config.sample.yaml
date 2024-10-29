@@ -87,11 +87,6 @@ sources:
       # needed with the `ldaps` scheme, as the server will already be
       # hosting TLS.
       danger_use_start_tls: false
-
-    # Path to the file that keeps track of previously synced LDAP entries.
-    # This file should be persisted, otherwise users may become out of sync.
-    cache_path: /opt/famedly-sync-agent/famedly-sync.cache
-
   # Configuration for the UKT source - a custom endpoint provided by UKT,
   # which gives a list of emails of users that should be deleted from Zitadel.
   ukt:
