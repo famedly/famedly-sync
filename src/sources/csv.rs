@@ -26,7 +26,7 @@ impl Source for CsvSource {
 		let new_users = self.read_csv()?;
 		// TODO: Implement changed and deleted users
 		// Holding off on this until we get rid of the cache concept
-		// https://github.com/famedly/ldap-sync/issues/53
+		// https://github.com/famedly/famedly-sync/issues/53
 		return Ok(SourceDiff { new_users, changed_users: vec![], deleted_user_ids: vec![] });
 	}
 }

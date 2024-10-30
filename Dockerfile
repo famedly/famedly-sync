@@ -22,8 +22,8 @@ RUN cargo auditable build --release
 
 FROM debian:bookworm-slim
 RUN apt update && apt install ca-certificates curl -y
-RUN mkdir -p /opt/famedly-sync-agent
-WORKDIR /opt/famedly-sync-agent
-COPY --from=builder /app/target/release/ldap-sync /usr/local/bin/famedly-sync-agent
-ENV FAMEDLY_LDAP_SYNC_CONFIG="/opt/famedly-sync-agent/config.yaml"
-ENTRYPOINT ["/usr/local/bin/famedly-sync-agent"]
+RUN mkdir -p /opt/famedly-sync
+WORKDIR /opt/famedly-sync
+COPY --from=builder /app/target/release/famedly-sync /usr/local/bin/famedly-sync
+ENV FAMEDLY_SYNC_CONFIG="/opt/famedly-sync/config.yaml"
+ENTRYPOINT ["/usr/local/bin/famedly-sync"]

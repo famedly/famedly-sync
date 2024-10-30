@@ -17,7 +17,7 @@ services:
         read_only: true
 
   test-setup:
-    image: famedly/ldap-sync-testenv
+    image: famedly/famedly-sync-testenv
     build:
       context: ./test-setup
     entrypoint: /environment/test-setup.sh

@@ -3,14 +3,14 @@
 use std::{collections::HashSet, path::Path, time::Duration};
 
 use base64::prelude::{Engine, BASE64_STANDARD};
-use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
-use ldap_sync::{
+use famedly_sync::{
 	csv_test_helpers::temp_csv_file,
 	ukt_test_helpers::{
 		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
 	},
 	AttributeMapping, Config, FeatureFlag,
 };
+use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
 use tempfile::TempDir;
 use test_log::test;
 use tokio::sync::OnceCell;

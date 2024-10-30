@@ -2,7 +2,7 @@
 use std::{path::Path, process::ExitCode, str::FromStr};
 
 use anyhow::{Context, Result};
-use ldap_sync::Config;
+use famedly_sync::Config;
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
@@ -20,7 +20,7 @@ async fn main() -> ExitCode {
 #[allow(clippy::print_stderr)]
 async fn run_sync() -> Result<()> {
 	let config = {
-		let config_path = std::env::var("FAMEDLY_LDAP_SYNC_CONFIG").unwrap_or("config.yaml".into());
+		let config_path = std::env::var("FAMEDLY_SYNC_CONFIG").unwrap_or("config.yaml".into());
 		let config_path = Path::new(&config_path);
 		match Config::new(config_path) {
 			Ok(config) => config,

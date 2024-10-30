@@ -11,7 +11,7 @@ Currently supported sources:
 
 The tool expects a configuration file located at `./config.yaml`. See example configuration at [config.sample.yaml](./config.sample.yaml).
 
-The default path can be changed by setting the new path to the environment variable `FAMEDLY_LDAP_SYNC_CONFIG`.
+The default path can be changed by setting the new path to the environment variable `FAMEDLY_SYNC_CONFIG`.
 
 Also, individual configuration items and the whole configuration can be set using environment variables. For example, the following YAML configuration:
 
@@ -24,10 +24,10 @@ sources:
 Could be set using the following environment variable:
 
 ```bash
-FAMEDLY_LDAP_SYNC__SOURCES__LDAP__URL="ldap://localhost:1389"
+FAMEDLY_SYNC__SOURCES__LDAP__URL="ldap://localhost:1389"
 ```
 
-Note that the environment variable name always starts with the prefix `FAMEDLY_LDAP_SYNC` followed by keys separated by double underscores (`__`).
+Note that the environment variable name always starts with the prefix `FAMEDLY_SYNC` followed by keys separated by double underscores (`__`).
 
 Some configuration items take a list of values. In this cases the values should be separated by space. **If an empty list is desired the variable shouldn't be created.**
 

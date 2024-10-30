@@ -20,7 +20,7 @@ use crate::{
 };
 
 /// App prefix for env var configuration
-const ENV_VAR_CONFIG_PREFIX: &str = "FAMEDLY_LDAP_SYNC";
+const ENV_VAR_CONFIG_PREFIX: &str = "FAMEDLY_SYNC";
 /// Separator for setting a list using env vars
 const ENV_VAR_LIST_SEP: &str = " ";
 
