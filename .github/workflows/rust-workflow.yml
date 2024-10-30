@@ -19,13 +19,11 @@ concurrency:
 # Defined CI jobs.
 jobs:
   simple-checks:
-    container: ghcr.io/famedly/rust-container:nightly
+    container: docker-oss.nexus.famedly.de/rust-container:nightly
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
-      uses: actions/checkout@v3
-      with:
-        path: head
+      uses: actions/checkout@v4
 
     - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
       with:
@@ -34,43 +32,36 @@ jobs:
         gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
     - name: Caching
-      uses: Swatinem/rust-cache@b8a6852b4f997182bdea832df3f9e153038b5191
+      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
       with:
         cache-on-failure: true
         cache-all-crates: true
 
     - name: Rustfmt
       shell: bash
-      working-directory: head
       run: cargo +${NIGHTLY_VERSION} fmt -- --check
 
     - name: Clippy
-      working-directory: head
       shell: bash
       run: cargo +${NIGHTLY_VERSION} clippy --workspace --all-targets -- -D warnings
 
     - name: Doc-test
       shell: bash
-      working-directory: head
       run: cargo +${NIGHTLY_VERSION} test --doc --workspace --verbose
 
     - name: Udeps
       shell: bash
-      working-directory: head
       run: cargo +${NIGHTLY_VERSION} udeps
 
     - name: Typos
       shell: bash
-      working-directory: head
       run: typos --exclude '*.key' --exclude '*.crt' --exclude '*.csr' --exclude '*.srl'
 
   tests:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
-      uses: actions/checkout@v3
-      with:
-        path: head
+      uses: actions/checkout@v4
 
     - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
       with:
@@ -82,7 +73,7 @@ jobs:
       run: rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
 
     - name: Caching
-      uses: Swatinem/rust-cache@b8a6852b4f997182bdea832df3f9e153038b5191
+      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
       with:
         cache-on-failure: true
         cache-all-crates: true
@@ -94,31 +85,24 @@ jobs:
     - name: Test
       timeout-minutes: 20
       shell: bash
-      working-directory: head
       run: |
         docker compose --project-directory ./tests/environment down -v
-        cargo llvm-cov nextest --profile ci --workspace --lcov --output-path '${{github.workspace}}/lcov.info'
-        sed "s|$PWD/||g" -i '${{github.workspace}}/lcov.info'
+        cargo llvm-cov nextest --profile ci --workspace --lcov --output-path lcov.info
 
     - name: Get docker logs on failure
       shell: bash
       if: failure()
-      working-directory: head
       run: |
         docker compose --project-directory ./tests/environment logs
-
-    - name: Setup LCOV
-      uses: hrishikesh-kadam/setup-lcov@6c1aa0cc9e1c02f9f58f01ac599f1064ccc83470
 
     - name: Codecov - Upload coverage
       uses: codecov/codecov-action@v4
       with:
         token: ${{secrets.CODECOV_TOKEN}}
-        files: "${{github.workspace}}/lcov.info"
+        files: lcov.info
 
     - name: Codecov - Upload test results
       uses: codecov/test-results-action@v1
       with:
         token: ${{secrets.CODECOV_TOKEN}}
-        file: "${{github.workspace}}/target/ci/junit.xml"
 
