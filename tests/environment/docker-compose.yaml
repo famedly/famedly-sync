@@ -53,7 +53,7 @@ services:
         condition: 'service_healthy'
 
   zitadel:
-    image: ghcr.io/zitadel/zitadel:v2.58.3
+    image: ghcr.io/zitadel/zitadel:v2.64.1
     command: start-from-init --masterkey "MasterkeyNeedsToHave32Characters" --tlsMode disabled --config /zitadel-config/zitadel-config.yaml --steps /zitadel-config/zitadel-init.yaml
     ports:
       - 8080:8080
