@@ -3,14 +3,10 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
 use serde::Deserialize;
 use url::Url;
-
-use super::Source;
-use crate::zitadel::{SourceDiff, UserId};
 
 /// UKT Source
 pub struct UktSource {
@@ -18,19 +14,6 @@ pub struct UktSource {
 	ukt_config: UktSourceConfig,
 	/// Reqwest client
 	client: Client,
-}
-
-#[async_trait]
-impl Source for UktSource {
-	fn get_name(&self) -> &'static str {
-		"UKT"
-	}
-
-	async fn get_diff(&self) -> Result<SourceDiff> {
-		let deleted_user_emails = self.get_removed_user_emails().await?;
-		let deleted_user_ids = deleted_user_emails.into_iter().map(UserId::Login).collect();
-		return Ok(SourceDiff { new_users: vec![], changed_users: vec![], deleted_user_ids });
-	}
 }
 
 impl UktSource {
