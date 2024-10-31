@@ -9,9 +9,10 @@ use famedly_sync::{
 	ukt_test_helpers::{
 		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
 	},
-	AttributeMapping, Config, FeatureFlag,
+	AttributeMapping, Config, FeatureFlag, LdapSourceConfig,
 };
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
+use serde::{de::IntoDeserializer, Deserialize};
 use tempfile::TempDir;
 use test_log::test;
 use tokio::sync::OnceCell;
@@ -47,7 +48,7 @@ async fn test_e2e_simple_sync() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
@@ -120,7 +121,7 @@ async fn test_e2e_sync_disabled_user() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
@@ -145,7 +146,7 @@ async fn test_e2e_sync_disabled_user() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_sso() {
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 	config.feature_flags.push(FeatureFlag::SsoLogin);
 
 	let mut ldap = Ldap::new().await;
@@ -189,7 +190,7 @@ async fn test_e2e_sync_change() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	ldap.change_user("change", vec![("telephoneNumber", HashSet::from(["+12015550123"]))]).await;
@@ -227,7 +228,7 @@ async fn test_e2e_sync_disable_and_reenable() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 
 	perform_sync(config).await.expect("syncing failed");
 	let zitadel = open_zitadel_connection().await;
@@ -261,7 +262,7 @@ async fn test_e2e_sync_email_change() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	ldap.change_user("email_change", vec![("mail", HashSet::from(["email_changed@famedly.de"]))])
@@ -290,7 +291,7 @@ async fn test_e2e_sync_deletion() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
@@ -309,7 +310,7 @@ async fn test_e2e_sync_deletion() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_ldaps() {
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 	config
 		.sources
 		.ldap
@@ -345,7 +346,7 @@ async fn test_e2e_ldaps() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_ldaps_starttls() {
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 	config
 		.sources
 		.ldap
@@ -363,7 +364,7 @@ async fn test_e2e_ldaps_starttls() {
 		"Bobby",
 		"starttls@famedly.de",
 		Some("+12015550123"),
-		"starttls",
+		"starttls2",
 		false,
 	)
 	.await;
@@ -386,7 +387,7 @@ async fn test_e2e_no_phone() {
 	ldap.create_user("Bob", "Tables", "Bobby", "no_phone@famedly.de", None, "no_phone", false)
 		.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
@@ -433,7 +434,7 @@ async fn test_e2e_sync_invalid_phone() {
 	)
 	.await;
 
-	let config = config().await;
+	let config = ldap_config().await;
 	perform_sync(config).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
@@ -488,7 +489,7 @@ async fn test_e2e_sync_invalid_phone() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_binary_attr() {
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 
 	// OpenLDAP checks if types match, so we need to use an attribute
 	// that can actually be binary.
@@ -553,7 +554,7 @@ async fn test_e2e_binary_attr() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_binary_attr_valid_utf8() {
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 
 	// OpenLDAP checks if types match, so we need to use an attribute
 	// that can actually be binary.
@@ -614,8 +615,8 @@ async fn test_e2e_binary_attr_valid_utf8() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_dry_run() {
-	let mut dry_run_config = config().await.clone();
-	let config = config().await;
+	let mut dry_run_config = ldap_config().await.clone();
+	let config = ldap_config().await;
 	dry_run_config.feature_flags.push(FeatureFlag::DryRun);
 
 	let mut ldap = Ldap::new().await;
@@ -721,7 +722,7 @@ async fn test_e2e_sync_deactivated_only() {
 
 	ldap.change_user("reenabled_disable_only", vec![("shadowFlag", HashSet::from(["514"]))]).await;
 
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 	perform_sync(&config).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
@@ -789,7 +790,7 @@ async fn test_e2e_ukt_sync() {
 	prepare_oauth2_mock(&mock_server).await;
 	prepare_endpoint_mock(&mock_server, "delete_me@famedly.de").await;
 
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 
 	config
 		.sources
@@ -846,7 +847,7 @@ async fn test_e2e_ukt_sync() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_csv_sync() {
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 
 	perform_sync(&config).await.expect("syncing failed");
 
@@ -943,7 +944,7 @@ async fn test_e2e_full_sync() {
 	prepare_oauth2_mock(&mock_server).await;
 	prepare_endpoint_mock(&mock_server, "not_to_be_there@famedly.de").await;
 
-	let mut config = config().await.clone();
+	let mut config = ldap_config().await.clone();
 	config
 		.sources
 		.ukt
@@ -1094,7 +1095,7 @@ struct Ldap {
 
 impl Ldap {
 	async fn new() -> Self {
-		let config = config().await.clone();
+		let config = ldap_config().await.clone();
 		let mut settings = LdapConnSettings::new();
 
 		if let Some(ref ldap_config) = config.sources.ldap {
@@ -1149,7 +1150,7 @@ impl Ldap {
 			attrs.push(("telephoneNumber", HashSet::from([phone])));
 		}
 
-		let base_dn = config()
+		let base_dn = ldap_config()
 			.await
 			.sources
 			.ldap
@@ -1178,7 +1179,7 @@ impl Ldap {
 			.map(|(attribute, changes)| Mod::Replace(attribute, changes))
 			.collect();
 
-		let base_dn = config()
+		let base_dn = ldap_config()
 			.await
 			.sources
 			.ldap
@@ -1196,7 +1197,7 @@ impl Ldap {
 	}
 
 	async fn delete_user(&mut self, uid: &str) {
-		let base_dn = config()
+		let base_dn = ldap_config()
 			.await
 			.sources
 			.ldap
@@ -1216,29 +1217,60 @@ impl Ldap {
 
 /// Open a connection to the configured Zitadel backend
 async fn open_zitadel_connection() -> Zitadel {
-	let zitadel_config = config().await.zitadel.clone();
+	let zitadel_config = ldap_config().await.zitadel.clone();
 	Zitadel::new(zitadel_config.url, zitadel_config.key_file)
 		.await
 		.expect("failed to set up Zitadel client")
 }
 
 /// Get the module's test environment config
-async fn config() -> &'static Config {
+async fn ldap_config() -> &'static Config {
 	CONFIG
 		.get_or_init(|| async {
 			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
 				.expect("failed to parse test env file");
 
-			let tempdir = TEMPDIR
-				.get_or_init(|| async { TempDir::new().expect("failed to initialize cache dir") })
-				.await;
+			config.sources.ldap = serde_json::from_slice(
+				&std::fs::read(Path::new("tests/environment/ldap-config.template.yaml"))
+					.expect("failed to read ldap config file"),
+			)
+			.expect("failed to parse ldap config");
 
 			config
-				.sources
-				.ldap
-				.as_mut()
-				.expect("ldap must be configured for this test")
-				.cache_path = tempdir.path().join("cache.bin");
+		})
+		.await
+}
+
+/// Get the module's test environment config
+async fn ukt_config() -> &'static Config {
+	CONFIG
+		.get_or_init(|| async {
+			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
+				.expect("failed to parse test env file");
+
+			config.sources.ldap = serde_json::from_slice(
+				&std::fs::read(Path::new("tests/environment/ukt-config.template.yaml"))
+					.expect("failed to read ukt config file"),
+			)
+			.expect("failed to parse ukt config");
+
+			config
+		})
+		.await
+}
+
+/// Get the module's test environment config
+async fn csv_config() -> &'static Config {
+	CONFIG
+		.get_or_init(|| async {
+			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
+				.expect("failed to parse test env file");
+
+			config.sources.ldap = serde_json::from_slice(
+				&std::fs::read(Path::new("tests/environment/csv-config.template.yaml"))
+					.expect("failed to read csv config file"),
+			)
+			.expect("failed to parse csv config");
 
 			config
 		})
