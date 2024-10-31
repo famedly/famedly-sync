@@ -11,7 +11,7 @@ mod zitadel;
 
 use std::collections::VecDeque;
 
-pub use config::{Config, FeatureFlag};
+pub use config::{Config, FeatureFlag, LdapSourceConfig};
 pub use sources::{
 	csv::test_helpers as csv_test_helpers, ldap::AttributeMapping,
 	ukt::test_helpers as ukt_test_helpers,

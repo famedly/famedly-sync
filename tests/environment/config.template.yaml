@@ -5,45 +5,5 @@ zitadel:
   project_id: @PROJECT_ID@
   idp_id: @IDP_ID@
 
-sources:
-  ldap:
-    url: ldap://localhost:1389
-    base_dn: ou=testorg,dc=example,dc=org
-    bind_dn: cn=admin,dc=example,dc=org
-    bind_password: adminpassword
-    user_filter: "(objectClass=shadowAccount)"
-    timeout: 5
-    check_for_deleted_entries: true
-    use_attribute_filter: true
-    attributes:
-      first_name: "cn"                  # objectClass: person
-      last_name: "sn"                   # objectClass: person
-      preferred_username: "displayName" # objectClass: inetOrgPerson
-      email: "mail"                     # objectClass: inetOrgPerson
-      phone: "telephoneNumber"          # objectClass: person
-      user_id: "uid"
-      status:
-        name: "shadowFlag"          # objectClass: shadowAccount
-        is_binary: false
-      disable_bitmasks: [0x2, 0x10]
-    tls:
-      client_key: ./tests/environment/certs/client.key
-      client_certificate: ./tests/environment/certs/client.crt
-      server_certificate: ./tests/environment/certs/server.crt
-      danger_disable_tls_verify: false
-      danger_use_start_tls: false
-    cache_path: ./test
-
-  ukt:
-    endpoint_url: https://list.example.invalid/usersync4chat/maillist
-    oauth2_url: https://list.example.invalid/token
-    client_id: mock_client_id
-    client_secret: mock_client_secret
-    scope: "openid read-maillist"
-    grant_type: client_credentials
-
-  csv:
-    file_path: ./tests/environment/files/test-users.csv
-
 feature_flags:
   - sso_login

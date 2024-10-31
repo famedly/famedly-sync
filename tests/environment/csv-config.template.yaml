@@ -1,0 +1,3 @@
+sources:
+  csv:
+    file_path: ./tests/environment/files/test-users.csv

@@ -1,0 +1,8 @@
+sources:
+  ukt:
+    endpoint_url: https://list.example.invalid/usersync4chat/maillist
+    oauth2_url: https://list.example.invalid/token
+    client_id: mock_client_id
+    client_secret: mock_client_secret
+    scope: "openid read-maillist"
+    grant_type: client_credentials
