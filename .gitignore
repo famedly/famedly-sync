@@ -2,3 +2,6 @@
 /target
 /tests/environment/zitadel/service-user.json
 /tests/environment/config.yaml
+/tests/environment/certs/*.crt
+/tests/environment/certs/*.key
+.DS_Store
