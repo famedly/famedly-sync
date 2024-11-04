@@ -1,0 +1,30 @@
+# Configuration for Famedly's Zitadel - has to be provided by Famedly
+zitadel:
+  # The Famedly user endpoint to sync to.
+  url: https://auth.famedly.de
+  # The Famedly-provided service user credentials.
+  key_file: /opt/famedly-sync-agent/service-user.json
+  # The organization whose users to sync.
+  organization_id: 278274756195721220
+  # The project to grant users access to.
+  project_id: 278274945274880004
+  # The identity provider ID to enable SSO login for
+  idp_id: 281430143275106308
+
+feature_flags:
+  - verify_email      # Whether to ask users to verify their email addresses post sync
+  - verify_phone      # Whether to ask users to verify their phone numbers post sync
+  # - sso_login       # Whether to enable SSO login - Please note that his has some drawbacks and limitations, see the help center article for more information
+  # - dry_run         # Disable syncing users to Zitadel - Intended to ensure syncs are working before productive deployment
+  # - deactivate_only # Only deactivate users, do not create or update them.
+
+# Configuration for the sources to sync from.
+sources:
+  # Configuration for the CSV sources
+  # Updates Zitadel to match the CSV file.
+  #! DANGER: This will delete all users that are not in the CSV file!
+  csv:
+    # Path to the CSV file to read from.
+    # Expected structure of the CSV file is as follows:
+    # email,first_name,last_name,phone
+    file_path:  ./tests/environment/files/test-users.csv
