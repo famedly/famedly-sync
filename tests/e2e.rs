@@ -9,11 +9,9 @@ use famedly_sync::{
 	ukt_test_helpers::{
 		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
 	},
-	AttributeMapping, Config, FeatureFlag, LdapSourceConfig,
+	AttributeMapping, Config, FeatureFlag,
 };
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
-use serde::{de::IntoDeserializer, Deserialize};
-use tempfile::TempDir;
 use test_log::test;
 use tokio::sync::OnceCell;
 use url::Url;
@@ -24,8 +22,9 @@ use zitadel_rust_client::v1::{
 	Email, Gender, ImportHumanUserRequest, Phone, Profile, UserType, Zitadel,
 };
 
-static CONFIG: OnceCell<Config> = OnceCell::const_new();
-static TEMPDIR: OnceCell<TempDir> = OnceCell::const_new();
+static CONFIG_WITH_LDAP: OnceCell<Config> = OnceCell::const_new();
+static CONFIG_WITH_CSV: OnceCell<Config> = OnceCell::const_new();
+static CONFIG_WITH_UKT: OnceCell<Config> = OnceCell::const_new();
 
 /// The Famedly UUID namespace to use to generate v5 UUIDs.
 const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
@@ -790,7 +789,7 @@ async fn test_e2e_ukt_sync() {
 	prepare_oauth2_mock(&mock_server).await;
 	prepare_endpoint_mock(&mock_server, "delete_me@famedly.de").await;
 
-	let mut config = ldap_config().await.clone();
+	let mut config = ukt_config().await.clone();
 
 	config
 		.sources
@@ -847,7 +846,7 @@ async fn test_e2e_ukt_sync() {
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_csv_sync() {
-	let mut config = ldap_config().await.clone();
+	let mut config = csv_config().await.clone();
 
 	perform_sync(&config).await.expect("syncing failed");
 
@@ -905,7 +904,7 @@ async fn test_e2e_csv_sync() {
 	let grant = grants.result.first().expect("no user grants found");
 	assert!(grant.role_keys.clone().into_iter().any(|key| key == FAMEDLY_USER_ROLE));
 
-	// Not possible to re-import an existing user (as checked by unique email)
+	// Re-import an existing user to update (as checked by unique email)
 	let csv_content = indoc::indoc! {r#"
     email,first_name,last_name,phone
     john.doe@example.com,Changed_Name,Changed_Surname,+2222222222
@@ -925,10 +924,10 @@ async fn test_e2e_csv_sync() {
 		let phone = user.phone.expect("user lacks a phone number");
 		let email = user.email.expect("user lacks an email address");
 
-		assert_eq!(profile.first_name, "John");
-		assert_eq!(profile.last_name, "Doe");
-		assert_eq!(profile.display_name, "Doe, John");
-		assert_eq!(phone.phone, "+1111111111");
+		assert_eq!(profile.first_name, "Changed_Name");
+		assert_eq!(profile.last_name, "Changed_Surname");
+		assert_eq!(profile.display_name, "Changed_Surname, Changed_Name");
+		assert_eq!(phone.phone, "+2222222222");
 		assert!(phone.is_phone_verified);
 		assert_eq!(email.email, "john.doe@example.com");
 		assert!(email.is_email_verified);
@@ -939,23 +938,12 @@ async fn test_e2e_csv_sync() {
 
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
-async fn test_e2e_full_sync() {
+async fn test_e2e_ldap_with_ukt_sync() {
 	let mock_server = MockServer::start().await;
 	prepare_oauth2_mock(&mock_server).await;
 	prepare_endpoint_mock(&mock_server, "not_to_be_there@famedly.de").await;
 
-	let mut config = ldap_config().await.clone();
-	config
-		.sources
-		.ukt
-		.as_mut()
-		.map(|ukt| {
-			ukt.oauth2_url = get_mock_server_url(&mock_server, OAUTH2_PATH)
-				.expect("Failed to get mock server URL");
-			ukt.endpoint_url = get_mock_server_url(&mock_server, ENDPOINT_PATH)
-				.expect("Failed to get mock server URL");
-		})
-		.expect("UKT configuration is missing");
+	// LDAP SYNC
 
 	let mut ldap = Ldap::new().await;
 	ldap.create_user(
@@ -1002,44 +990,34 @@ async fn test_e2e_full_sync() {
 	)
 	.await;
 
-	let csv_content = indoc::indoc! {r#"
-    email,first_name,last_name,phone
-    csv_sync@example.com,John,Doe,+1111111111
-  "#};
-	// Have to create a new temp file
-	// because we can't re-use users between tests
-	// and the ./tests/environment/files/test-users.csv was already imported
-	let _file = temp_csv_file(&mut config, csv_content);
+	let ldap_config = ldap_config().await.clone();
+	perform_sync(&ldap_config).await.expect("syncing failed");
 
-	perform_sync(&config).await.expect("syncing failed");
+	// UKT SYNC
+
+	let mut ukt_config = ukt_config().await.clone();
+	ukt_config
+		.sources
+		.ukt
+		.as_mut()
+		.map(|ukt| {
+			ukt.oauth2_url = get_mock_server_url(&mock_server, OAUTH2_PATH)
+				.expect("Failed to get mock server URL");
+			ukt.endpoint_url = get_mock_server_url(&mock_server, ENDPOINT_PATH)
+				.expect("Failed to get mock server URL");
+		})
+		.expect("UKT configuration is missing");
+
+	perform_sync(&ukt_config).await.expect("syncing failed");
+
+	// VERIFY RESULTS OF SYNC
 
 	let zitadel = open_zitadel_connection().await;
 
-	let user = zitadel
-		.get_user_by_login_name("csv_sync@example.com")
-		.await
-		.expect("could not query Zitadel users");
-	assert!(user.is_some());
-	let user = user.expect("could not find user");
-	assert_eq!(user.user_name, "csv_sync@example.com");
-	if let Some(UserType::Human(user)) = user.r#type {
-		let profile = user.profile.expect("user lacks a profile");
-		let phone = user.phone.expect("user lacks a phone number");
-		let email = user.email.expect("user lacks an email address");
-
-		assert_eq!(profile.first_name, "John");
-		assert_eq!(profile.last_name, "Doe");
-		assert_eq!(profile.display_name, "Doe, John");
-		assert_eq!(phone.phone, "+1111111111");
-		assert!(phone.is_phone_verified);
-		assert_eq!(email.email, "csv_sync@example.com");
-		assert!(email.is_email_verified);
-	} else {
-		panic!("user lacks details");
-	}
-
 	let user = zitadel.get_user_by_login_name("not_to_be_there@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(user.is_err_and(|error| matches!(error,
+	ZitadelError::TonicResponseError(status) if status.code() ==
+	TonicErrorCode::NotFound)));
 
 	let user = zitadel
 		.get_user_by_login_name("to_be_there@famedly.de")
@@ -1066,11 +1044,15 @@ async fn test_e2e_full_sync() {
 		_ => panic!("human user became a machine user?"),
 	}
 
+	// UPDATES IN LDAP
+
 	ldap.change_user("to_be_changed", vec![("telephoneNumber", HashSet::from(["+12015550123"]))])
 		.await;
 	ldap.delete_user("not_to_be_there_later").await;
 
-	perform_sync(&config).await.expect("syncing failed");
+	perform_sync(&ldap_config).await.expect("syncing failed");
+
+	// VERIFY SECOND LDAP SYNC
 
 	let user = zitadel
 		.get_user_by_login_name("to_be_changed@famedly.de")
@@ -1084,7 +1066,6 @@ async fn test_e2e_full_sync() {
 		}
 		_ => panic!("human user became a machine user?"),
 	}
-
 	let user = zitadel.get_user_by_login_name("not_to_be_there_later@famedly.de").await;
 	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
 }
@@ -1225,12 +1206,12 @@ async fn open_zitadel_connection() -> Zitadel {
 
 /// Get the module's test environment config
 async fn ldap_config() -> &'static Config {
-	CONFIG
+	CONFIG_WITH_LDAP
 		.get_or_init(|| async {
 			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
 				.expect("failed to parse test env file");
 
-			config.sources.ldap = serde_json::from_slice(
+			config.sources.ldap = serde_yaml::from_slice(
 				&std::fs::read(Path::new("tests/environment/ldap-config.template.yaml"))
 					.expect("failed to read ldap config file"),
 			)
@@ -1243,12 +1224,12 @@ async fn ldap_config() -> &'static Config {
 
 /// Get the module's test environment config
 async fn ukt_config() -> &'static Config {
-	CONFIG
+	CONFIG_WITH_UKT
 		.get_or_init(|| async {
 			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
 				.expect("failed to parse test env file");
 
-			config.sources.ldap = serde_json::from_slice(
+			config.sources.ukt = serde_yaml::from_slice(
 				&std::fs::read(Path::new("tests/environment/ukt-config.template.yaml"))
 					.expect("failed to read ukt config file"),
 			)
@@ -1261,12 +1242,12 @@ async fn ukt_config() -> &'static Config {
 
 /// Get the module's test environment config
 async fn csv_config() -> &'static Config {
-	CONFIG
+	CONFIG_WITH_CSV
 		.get_or_init(|| async {
 			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
 				.expect("failed to parse test env file");
 
-			config.sources.ldap = serde_json::from_slice(
+			config.sources.csv = serde_yaml::from_slice(
 				&std::fs::read(Path::new("tests/environment/csv-config.template.yaml"))
 					.expect("failed to read csv config file"),
 			)

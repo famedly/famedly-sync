@@ -19,6 +19,7 @@ feature_flags:
   # - deactivate_only # Only deactivate users, do not create or update them. Keep in mind LDAP is cached and all the changes made on LDAP will be written to the cache as if they where applied. Therefore, only the deactivation changes will be applied to Zitadel but **all the other changes will be lost**.
 
 # Configuration for the sources to sync from.
+# IMPORTANT: Only one source can be present at a time.
 sources:
   # Configuration for the LDAP source. Using caching, LDAP source checks for new, updated, and deleted users in the LDAP server.
   ldap:
@@ -108,10 +109,11 @@ sources:
     # Grant type
     grant_type: client_credentials
 
-  # Configuration for the CSV source - reads a CSV file
-  # and creates **new** users in Famedly's Zitadel.
-  # Expected structure of the CSV file is as follows:
-  # email,first_name,last_name,phone
+  # Configuration for the CSV sources
+  # Updates Zitadel to match the CSV file.
+  #! DANGER: This will delete all users that are not in the CSV file!
   csv:
     # Path to the CSV file to read from.
+    # Expected structure of the CSV file is as follows:
+    # email,first_name,last_name,phone
     file_path:  ./tests/environment/files/test-users.csv
