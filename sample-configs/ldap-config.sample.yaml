@@ -16,10 +16,9 @@ feature_flags:
   - verify_phone      # Whether to ask users to verify their phone numbers post sync
   # - sso_login       # Whether to enable SSO login - Please note that his has some drawbacks and limitations, see the help center article for more information
   # - dry_run         # Disable syncing users to Zitadel - Intended to ensure syncs are working before productive deployment
-  # - deactivate_only # Only deactivate users, do not create or update them. Keep in mind LDAP is cached and all the changes made on LDAP will be written to the cache as if they where applied. Therefore, only the deactivation changes will be applied to Zitadel but **all the other changes will be lost**.
+  # - deactivate_only # Only deactivate users, do not create or update them.
 
 # Configuration for the sources to sync from.
-# IMPORTANT: Only one source can be present at a time.
 sources:
   # Configuration for the LDAP source. Using caching, LDAP source checks for new, updated, and deleted users in the LDAP server.
   ldap:
@@ -88,27 +87,3 @@ sources:
       # needed with the `ldaps` scheme, as the server will already be
       # hosting TLS.
       danger_use_start_tls: false
-  # Configuration for the UKT source - a custom endpoint provided by UKT,
-  # which gives a list of emails of users that should be deleted from Zitadel.
-  ukt:
-    # Endpoint URL to fetch the list of users from.
-    endpoint_url: https://list.example.invalid/usersync4chat/maillist
-    # OAuth2 URL to fetch the token from.
-    oauth2_url: https://list.example.invalid/token
-    # Client ID
-    client_id: mock_client_id
-    # Client Secret
-    client_secret: mock_client_secret
-    # Scope of what to fetch
-    scope: "openid read-maillist"
-    # Grant type
-    grant_type: client_credentials
-
-  # Configuration for the CSV sources
-  # Updates Zitadel to match the CSV file.
-  #! DANGER: This will delete all users that are not in the CSV file!
-  csv:
-    # Path to the CSV file to read from.
-    # Expected structure of the CSV file is as follows:
-    # email,first_name,last_name,phone
-    file_path:  ./tests/environment/files/test-users.csv
