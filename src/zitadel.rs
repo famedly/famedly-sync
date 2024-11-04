@@ -408,6 +408,27 @@ impl Zitadel {
 			return Ok(());
 		}
 
+		let id = match &user.user_data.external_user_id {
+			StringOrBytes::String(value) => value.as_bytes(),
+			StringOrBytes::Bytes(value) => value,
+		};
+
+		let uuid;
+		let localpart = if self.feature_flags.contains(&FeatureFlag::PlainLocalpart) {
+			match &user.user_data.external_user_id {
+				StringOrBytes::String(value) => value,
+				StringOrBytes::Bytes(_) => {
+					bail!(
+						"Unsupported binary external ID for user using plain localparts: {:?}",
+						user
+					);
+				}
+			}
+		} else {
+			uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, id).to_string();
+			&uuid
+		};
+
 		let new_user_id = self
 			.zitadel_client
 			.create_human_user(&self.zitadel_config.organization_id, user.clone().into())
@@ -422,17 +443,12 @@ impl Zitadel {
 			)
 			.await?;
 
-		let id = match &user.user_data.external_user_id {
-			StringOrBytes::String(value) => value.as_bytes(),
-			StringOrBytes::Bytes(value) => value,
-		};
-
 		self.zitadel_client
 			.set_user_metadata(
 				Some(&self.zitadel_config.organization_id),
 				new_user_id.clone(),
 				"localpart".to_owned(),
-				&Uuid::new_v5(&FAMEDLY_NAMESPACE, id).to_string(),
+				localpart,
 			)
 			.await?;
 

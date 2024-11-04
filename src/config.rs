@@ -149,6 +149,8 @@ pub enum FeatureFlag {
 	DryRun,
 	/// If only deactivated users should be synced
 	DeactivateOnly,
+	/// Use plain localpart
+	PlainLocalpart,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
@@ -356,7 +358,10 @@ mod tests {
 		let file_path = create_config_file(tempdir.path());
 
 		let env_var_name = format!("{ENV_VAR_CONFIG_PREFIX}__FEATURE_FLAGS");
-		env::set_var(&env_var_name, "sso_login verify_email verify_phone dry_run deactivate_only");
+		env::set_var(
+			&env_var_name,
+			"sso_login verify_email verify_phone dry_run deactivate_only plain_localpart",
+		);
 
 		let loaded_config =
 			Config::new(file_path.as_path()).expect("Failed to create config object");
@@ -367,6 +372,7 @@ mod tests {
 		sample_config.feature_flags.push(FeatureFlag::VerifyPhone);
 		sample_config.feature_flags.push(FeatureFlag::DryRun);
 		sample_config.feature_flags.push(FeatureFlag::DeactivateOnly);
+		sample_config.feature_flags.push(FeatureFlag::PlainLocalpart);
 
 		env::remove_var(env_var_name);
 
