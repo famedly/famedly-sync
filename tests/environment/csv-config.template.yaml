@@ -1,3 +1,6 @@
-sources:
-  csv:
-    file_path: ./tests/environment/files/test-users.csv
+# Updates Zitadel to match the CSV file.
+#! DANGER: This will delete all users that are not in the CSV file!
+
+# Expected structure of the CSV file is as follows:
+# email,first_name,last_name,phone
+file_path: ./tests/environment/files/test-users.csv
