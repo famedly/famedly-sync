@@ -7,3 +7,6 @@ zitadel:
 
 feature_flags:
   - sso_login
+
+sources:
+  test: 1
