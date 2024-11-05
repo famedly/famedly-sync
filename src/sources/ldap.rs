@@ -110,21 +110,32 @@ impl LdapSource {
 
 	/// Construct a user from an LDAP SearchEntry
 	pub(crate) fn parse_user(&self, entry: SearchEntry) -> Result<User> {
-		let status_as_int = match read_search_entry(&entry, &self.ldap_config.attributes.status)? {
-			StringOrBytes::String(status) => status.parse::<i32>()?,
-			StringOrBytes::Bytes(status) => {
-				i32::from_be_bytes(status.try_into().map_err(|err: Vec<u8>| {
-					let err_string = String::from_utf8_lossy(&err).to_string();
-					anyhow!(err_string).context("failed to convert to i32 flag")
-				})?)
-			}
+		let disable_bitmask = {
+			use std::ops::BitOr;
+			self.ldap_config.attributes.disable_bitmasks.iter().fold(0, i32::bitor)
 		};
-		let enabled = !self
-			.ldap_config
-			.attributes
-			.disable_bitmasks
-			.iter()
-			.any(|flag| status_as_int & flag != 0);
+
+		let status = read_search_entry(&entry, &self.ldap_config.attributes.status)?;
+		let enabled = if disable_bitmask != 0 {
+			disable_bitmask
+				& match status {
+					StringOrBytes::String(status) => status.parse::<i32>()?,
+					StringOrBytes::Bytes(status) => {
+						i32::from_be_bytes(status.try_into().map_err(|err: Vec<u8>| {
+							let err_string = String::from_utf8_lossy(&err).to_string();
+							anyhow!(err_string).context("failed to convert to i32 flag")
+						})?)
+					}
+				} == 0
+		} else if let StringOrBytes::String(status) = status {
+			match &status[..] {
+				"TRUE" => true,
+				"FALSE" => false,
+				_ => bail!("Cannot parse status without disable_bitmasks: {:?}", status),
+			}
+		} else {
+			bail!("Binary status without disable_bitmasks");
+		};
 
 		let first_name = read_search_entry(&entry, &self.ldap_config.attributes.first_name)?;
 		let last_name = read_search_entry(&entry, &self.ldap_config.attributes.last_name)?;
@@ -570,5 +581,31 @@ mod tests {
 		assert_eq!(user.preferred_username, StringOrBytes::String("testuser".to_owned()));
 		assert_eq!(user.external_user_id, StringOrBytes::String("testuser".to_owned()));
 		assert!(user.enabled);
+	}
+
+	#[tokio::test]
+	async fn test_text_enabled() {
+		let mut config = load_config();
+		config.sources.ldap.as_mut().unwrap().attributes.disable_bitmasks =
+			serde_yaml::from_str("[0]").expect("invalid config fragment");
+		let ldap_source =
+			LdapSource { ldap_config: config.sources.ldap.unwrap(), is_dry_run: false };
+
+		for (attr, parsed) in [("TRUE", true), ("FALSE", false)] {
+			let entry = SearchEntry {
+				dn: "uid=testuser,ou=testorg,dc=example,dc=org".to_owned(),
+				attrs: {
+					let mut user = new_user();
+					user.insert("shadowFlag".to_owned(), vec![attr.to_owned()]);
+					user
+				},
+				bin_attrs: HashMap::new(),
+			};
+
+			let result = ldap_source.parse_user(entry);
+			assert!(result.is_ok(), "Failed to parse user: {:?}", result);
+			let user = result.unwrap();
+			assert_eq!(user.enabled, parsed);
+		}
 	}
 }
