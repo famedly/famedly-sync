@@ -5,7 +5,6 @@ use anyhow::{anyhow, Context, Result};
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use url::Url;
-use uuid::{uuid, Uuid};
 use zitadel_rust_client::{
 	v1::Zitadel as ZitadelClientV1,
 	v2::{
@@ -23,9 +22,6 @@ use crate::{
 	user::User,
 	FeatureFlag,
 };
-
-/// The Famedly UUID namespace to use to generate v5 UUIDs.
-const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
 
 /// The Zitadel project role to assign to users.
 const FAMEDLY_USER_ROLE: &str = "User";
@@ -130,10 +126,8 @@ impl Zitadel {
 			return Ok(());
 		}
 
-		let mut metadata = vec![SetMetadataEntry::new(
-			"localpart".to_owned(),
-			Uuid::new_v5(&FAMEDLY_NAMESPACE, imported_user.external_user_id.as_bytes()).to_string(),
-		)];
+		let mut metadata =
+			vec![SetMetadataEntry::new("localpart".to_owned(), imported_user.famedly_uuid())];
 
 		if let Some(preferred_username) = imported_user.preferred_username.clone() {
 			metadata.push(SetMetadataEntry::new(
