@@ -3,7 +3,11 @@ use std::fmt::Display;
 
 use anyhow::{anyhow, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
+use uuid::{uuid, Uuid};
 use zitadel_rust_client::v2::users::HumanUser;
+
+/// The Famedly UUID namespace to use to generate v5 UUIDs.
+const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
 
 /// Source-agnostic representation of a user
 #[derive(Clone)]
@@ -66,6 +70,14 @@ impl User {
 	/// Get a display name for this user
 	pub fn get_display_name(&self) -> String {
 		format!("{}, {}", self.last_name, self.first_name)
+	}
+
+	/// Return the user's UUID according to the Famedly UUID spec.
+	///
+	/// See
+	/// https://www.notion.so/famedly/Famedly-UUID-Specification-adc576f0f2d449bba2f6f13b2611738f
+	pub fn famedly_uuid(&self) -> String {
+		Uuid::new_v5(&FAMEDLY_NAMESPACE, self.external_user_id.as_bytes()).to_string()
 	}
 }
 
