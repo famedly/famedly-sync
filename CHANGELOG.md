@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2024-11-05
+
+### Features
+
+- Add CronJob manifest for ldap-sync
+- Add PlainLocalpart feature
+- Read status attribute with TRUE or FALSE string value
+
+### Testing
+
+- Fix certificate being not trusted on MacOS
+
+### Miscellaneous Tasks
+
+- Add codecov configuration
+- Rename to famedly-sync
+- Update rust workflow
+- Delete unused itertools dependency
+
 ## [0.5.0] - 2024-10-15
 
 
