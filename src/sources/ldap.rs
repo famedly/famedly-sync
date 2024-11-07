@@ -2,8 +2,9 @@
 
 use std::{fmt::Display, path::PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use base64::prelude::{Engine, BASE64_STANDARD};
 use ldap_poller::{
 	config::TLSConfig, ldap::EntryStatus, ldap3::SearchEntry, AttributeConfig, CacheMethod,
 	ConnectionConfig, Ldap, SearchEntryExt, Searches,
@@ -14,7 +15,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use url::Url;
 
 use super::Source;
-use crate::user::{StringOrBytes, User};
+use crate::user::User;
 
 /// LDAP sync source
 pub struct LdapSource {
@@ -99,13 +100,24 @@ impl LdapSource {
 			bail!("Binary status without disable_bitmasks");
 		};
 
-		let first_name = read_search_entry(&entry, &self.ldap_config.attributes.first_name)?;
-		let last_name = read_search_entry(&entry, &self.ldap_config.attributes.last_name)?;
-		let preferred_username =
-			read_search_entry(&entry, &self.ldap_config.attributes.preferred_username)?;
-		let email = read_search_entry(&entry, &self.ldap_config.attributes.email)?;
-		let ldap_user_id = read_search_entry(&entry, &self.ldap_config.attributes.user_id)?;
-		let phone = read_search_entry(&entry, &self.ldap_config.attributes.phone).ok();
+		let ldap_user_id = match read_search_entry(&entry, &self.ldap_config.attributes.user_id)? {
+			// TODO(tlater): Use an encoding that preserves alphabetic order
+			StringOrBytes::Bytes(byte_id) => BASE64_STANDARD.encode(byte_id),
+			StringOrBytes::String(string_id) => BASE64_STANDARD.encode(string_id),
+		};
+
+		let first_name =
+			read_string_entry(&entry, &self.ldap_config.attributes.first_name, &ldap_user_id)?;
+		let last_name =
+			read_string_entry(&entry, &self.ldap_config.attributes.last_name, &ldap_user_id)?;
+		let preferred_username = read_string_entry(
+			&entry,
+			&self.ldap_config.attributes.preferred_username,
+			&ldap_user_id,
+		)?;
+		let email = read_string_entry(&entry, &self.ldap_config.attributes.email, &ldap_user_id)?;
+		let phone =
+			read_string_entry(&entry, &self.ldap_config.attributes.phone, &ldap_user_id).ok();
 
 		Ok(User {
 			first_name,
@@ -119,29 +131,39 @@ impl LdapSource {
 	}
 }
 
+/// Read an an attribute, but assert that it is a string
+fn read_string_entry(
+	entry: &SearchEntry,
+	attribute: &AttributeMapping,
+	id: &str,
+) -> Result<String> {
+	match read_search_entry(entry, attribute)? {
+		StringOrBytes::String(entry) => Ok(entry),
+		StringOrBytes::Bytes(_) => {
+			Err(anyhow!("Unacceptable binary value for {} of user `{}`", attribute, id))
+		}
+	}
+}
+
 /// Read an attribute from the entry
 fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Result<StringOrBytes> {
 	match attribute {
 		AttributeMapping::OptionalBinary { name, is_binary: false }
 		| AttributeMapping::NoBinaryOption(name) => {
-			if let Some(attr) = entry.attr_first(name) {
-				return Ok(StringOrBytes::String(attr.to_owned()));
-			};
+			entry.attr_first(name).map(|entry| StringOrBytes::String(entry.to_owned()))
 		}
-		AttributeMapping::OptionalBinary { name, is_binary: true } => {
-			if let Some(binary_attr) = entry.bin_attr_first(name) {
-				return Ok(StringOrBytes::Bytes(binary_attr.to_vec()));
-			};
-
-			// If attributes encode as valid UTF-8, they will
-			// not be in the bin_attr list
-			if let Some(attr) = entry.attr_first(name) {
-				return Ok(StringOrBytes::Bytes(attr.as_bytes().to_vec()));
-			};
-		}
+		AttributeMapping::OptionalBinary { name, is_binary: true } => entry
+			.bin_attr_first(name)
+			// If an entry encodes as UTF-8, it will still only be
+			// available from the `.attr_first` function, even if ldap
+			// presents it with the `::` delimiter.
+			//
+			// Hence the configuration, we just treat it as binary
+			// data if this is requested.
+			.or_else(|| entry.attr_first(name).map(str::as_bytes))
+			.map(|entry| StringOrBytes::Bytes(entry.to_vec())),
 	}
-
-	bail!("missing `{}` values for `{}`", attribute, entry.dn)
+	.ok_or(anyhow!("missing `{}` values for `{}`", attribute, entry.dn))
 }
 
 /// LDAP-specific configuration
@@ -319,16 +341,26 @@ pub struct LdapTlsConfig {
 	pub danger_use_start_tls: bool,
 }
 
+/// A structure that can either be a string or bytes
+#[derive(Clone, Debug)]
+enum StringOrBytes {
+	/// A string
+	String(String),
+	/// A byte string
+	Bytes(Vec<u8>),
+}
+
 #[cfg(test)]
 mod tests {
 	use std::collections::HashMap;
 
+	use base64::prelude::{Engine, BASE64_STANDARD};
 	use indoc::indoc;
 	use ldap3::SearchEntry;
 	use ldap_poller::ldap::EntryStatus;
 	use tokio::sync::mpsc;
 
-	use crate::{sources::ldap::LdapSource, user::StringOrBytes, Config};
+	use crate::{sources::ldap::LdapSource, Config};
 
 	const EXAMPLE_CONFIG: &str = indoc! {r#"
         zitadel:
@@ -502,13 +534,13 @@ mod tests {
 		let result = ldap_source.parse_user(entry);
 		assert!(result.is_ok(), "Failed to parse user: {:?}", result);
 		let user = result.unwrap();
-		assert_eq!(user.first_name, StringOrBytes::String("Test".to_owned()));
-		assert_eq!(user.last_name, StringOrBytes::String("User".to_owned()));
-		assert_eq!(user.preferred_username, Some(StringOrBytes::String("testuser".to_owned())));
-		assert_eq!(user.email, StringOrBytes::String("testuser@example.com".to_owned()));
-		assert_eq!(user.phone, Some(StringOrBytes::String("123456789".to_owned())));
-		assert_eq!(user.preferred_username, Some(StringOrBytes::String("testuser".to_owned())));
-		assert_eq!(user.external_user_id, StringOrBytes::String("testuser".to_owned()));
+		assert_eq!(user.first_name, "Test");
+		assert_eq!(user.last_name, "User");
+		assert_eq!(user.preferred_username, Some("testuser".to_owned()));
+		assert_eq!(user.email, "testuser@example.com");
+		assert_eq!(user.phone, Some("123456789".to_owned()));
+		assert_eq!(user.preferred_username, Some("testuser".to_owned()));
+		assert_eq!(user.external_user_id, BASE64_STANDARD.encode("testuser"));
 		assert!(user.enabled);
 	}
 

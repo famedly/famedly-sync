@@ -1,7 +1,7 @@
 //! Sync tool between other sources and our infrastructure based on Zitadel.
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
-use user::{StringOrBytes, User};
+use user::User;
 use zitadel::Zitadel;
 
 mod config;
@@ -27,13 +27,12 @@ async fn get_next_zitadel_user(
 ) -> Result<Option<(User, String)>> {
 	match stream.next().await.transpose()? {
 		Some(mut zitadel_user) => {
-			let preferred_username: Option<StringOrBytes> = zitadel
+			let preferred_username = zitadel
 				.zitadel_client
 				.get_user_metadata(&zitadel_user.1, "preferred_username")
 				.await
 				.ok()
-				.and_then(|metadata| metadata.metadata().value())
-				.map(Into::into);
+				.and_then(|metadata| metadata.metadata().value());
 
 			zitadel_user.0.preferred_username = preferred_username;
 
