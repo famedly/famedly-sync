@@ -74,12 +74,12 @@ impl CsvData {
 	/// Convert CsvData to User data
 	fn to_user(csv_data: CsvData) -> User {
 		User {
-			email: csv_data.email.clone().into(),
-			first_name: csv_data.first_name.into(),
-			last_name: csv_data.last_name.into(),
-			phone: if csv_data.phone.is_empty() { None } else { Some(csv_data.phone.into()) },
-			preferred_username: Some(csv_data.email.clone().into()),
-			external_user_id: csv_data.email.into(),
+			email: csv_data.email.clone(),
+			first_name: csv_data.first_name,
+			last_name: csv_data.last_name,
+			phone: if csv_data.phone.is_empty() { None } else { Some(csv_data.phone) },
+			preferred_username: Some(csv_data.email.clone()),
+			external_user_id: csv_data.email,
 			enabled: true,
 		}
 	}
@@ -114,7 +114,7 @@ mod tests {
 	use indoc::indoc;
 
 	use super::*;
-	use crate::{user::StringOrBytes, Config};
+	use crate::Config;
 
 	const EXAMPLE_CONFIG: &str = indoc! {r#"
         zitadel:
@@ -155,27 +155,11 @@ mod tests {
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 4, "Unexpected number of users");
-		assert_eq!(
-			users[0].first_name,
-			StringOrBytes::String("John".to_owned()),
-			"Unexpected first name at index 0"
-		);
-		assert_eq!(
-			users[0].email,
-			StringOrBytes::String("john.doe@example.com".to_owned()),
-			"Unexpected email at index 0"
-		);
-		assert_eq!(
-			users[3].last_name,
-			StringOrBytes::String("Williams".to_owned()),
-			"Unexpected last name at index 3"
-		);
+		assert_eq!(users[0].first_name, "John", "Unexpected first name at index 0");
+		assert_eq!(users[0].email, "john.doe@example.com", "Unexpected email at index 0");
+		assert_eq!(users[3].last_name, "Williams", "Unexpected last name at index 3");
 		assert_eq!(users[2].phone, None, "Unexpected phone at index 2");
-		assert_eq!(
-			users[3].phone,
-			Some(StringOrBytes::String("+4444444444".to_owned())),
-			"Unexpected phone at index 3"
-		);
+		assert_eq!(users[3].phone, Some("+4444444444".to_owned()), "Unexpected phone at index 3");
 	}
 
 	#[test]
@@ -252,12 +236,12 @@ mod tests {
 		assert_eq!(users.len(), 1, "Unexpected number of users");
 		assert_eq!(
 			users[0].email,
-			StringOrBytes::String("jane.smith@example.com".to_owned()),
+			"jane.smith@example.com",
 			"Unexpected email at index 0"
 		);
 		assert_eq!(
 			users[0].last_name,
-			StringOrBytes::String("Smith".to_owned()),
+			"Smith",
 			"Unexpected last name at index 0"
 		);
 	}

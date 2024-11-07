@@ -130,20 +130,15 @@ impl Zitadel {
 			vec![SetMetadataEntry::new("localpart".to_owned(), imported_user.famedly_uuid())];
 
 		if let Some(preferred_username) = imported_user.preferred_username.clone() {
-			metadata.push(SetMetadataEntry::new(
-				"preferred_username".to_owned(),
-				preferred_username.to_string(),
-			));
+			metadata
+				.push(SetMetadataEntry::new("preferred_username".to_owned(), preferred_username));
 		}
 
 		let mut user = AddHumanUserRequest::new(
-			SetHumanProfile::new(
-				imported_user.first_name.to_string(),
-				imported_user.last_name.to_string(),
-			)
-			.with_nick_name(imported_user.external_user_id.to_string())
-			.with_display_name(imported_user.get_display_name()),
-			SetHumanEmail::new(imported_user.email.to_string())
+			SetHumanProfile::new(imported_user.first_name.clone(), imported_user.last_name.clone())
+				.with_nick_name(imported_user.external_user_id.clone())
+				.with_display_name(imported_user.get_display_name()),
+			SetHumanEmail::new(imported_user.email.clone())
 				.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyEmail)),
 		)
 		.with_organization(
@@ -154,17 +149,17 @@ impl Zitadel {
 		if let Some(phone) = imported_user.phone.clone() {
 			user.set_phone(
 				SetHumanPhone::new()
-					.with_phone(phone.to_string())
+					.with_phone(phone.clone())
 					.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyPhone)),
 			);
 		};
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
 			user.set_idp_links(vec![IdpLink::new()
-				.with_user_id(imported_user.external_user_id.to_string())
+				.with_user_id(imported_user.external_user_id.clone())
 				.with_idp_id(self.zitadel_config.idp_id.clone())
 				// TODO: Figure out if this is the correct value; empty is not permitted
-				.with_user_name(imported_user.email.to_string())]);
+				.with_user_name(imported_user.email.clone())]);
 		}
 
 		match self.zitadel_client.create_human_user(user.clone()).await {
@@ -223,9 +218,9 @@ impl Zitadel {
 		let mut request = UpdateHumanUserRequest::new();
 
 		if old_user.email != updated_user.email {
-			request.set_username(updated_user.email.to_string());
+			request.set_username(updated_user.email.clone());
 			request.set_email(
-				SetHumanEmail::new(updated_user.email.to_string())
+				SetHumanEmail::new(updated_user.email.clone())
 					.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyEmail)),
 			);
 		}
@@ -235,8 +230,8 @@ impl Zitadel {
 		{
 			request.set_profile(
 				SetHumanProfile::new(
-					updated_user.first_name.to_string(),
-					updated_user.last_name.to_string(),
+					updated_user.first_name.clone(),
+					updated_user.last_name.clone(),
 				)
 				.with_display_name(updated_user.get_display_name()),
 			);
@@ -246,7 +241,7 @@ impl Zitadel {
 			if let Some(phone) = updated_user.phone.clone() {
 				request.set_phone(
 					SetHumanPhone::new()
-						.with_phone(phone.to_string())
+						.with_phone(phone.clone())
 						.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyPhone)),
 				);
 			} else {
@@ -278,7 +273,7 @@ impl Zitadel {
 					.set_user_metadata(
 						zitadel_id,
 						"preferred_username",
-						&preferred_username.to_string(),
+						&preferred_username.clone(),
 					)
 					.await?;
 			} else {
