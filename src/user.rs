@@ -1,8 +1,5 @@
 //! User data helpers
-use std::fmt::Display;
-
 use anyhow::{anyhow, Result};
-use base64::prelude::{Engine, BASE64_STANDARD};
 use uuid::{uuid, Uuid};
 use zitadel_rust_client::v2::users::HumanUser;
 
@@ -13,19 +10,19 @@ const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
 #[derive(Clone)]
 pub(crate) struct User {
 	/// The user's first name
-	pub(crate) first_name: StringOrBytes,
+	pub(crate) first_name: String,
 	/// The user's last name
-	pub(crate) last_name: StringOrBytes,
+	pub(crate) last_name: String,
 	/// The user's email address
-	pub(crate) email: StringOrBytes,
+	pub(crate) email: String,
 	/// The user's phone number
-	pub(crate) phone: Option<StringOrBytes>,
+	pub(crate) phone: Option<String>,
 	/// Whether the user is enabled
 	pub(crate) enabled: bool,
 	/// The user's preferred username
-	pub(crate) preferred_username: Option<StringOrBytes>,
+	pub(crate) preferred_username: Option<String>,
 	/// The user's external (non-Zitadel) ID
-	pub(crate) external_user_id: StringOrBytes,
+	pub(crate) external_user_id: String,
 }
 
 impl User {
@@ -51,18 +48,13 @@ impl User {
 
 		let phone = user.phone().and_then(|human_phone| human_phone.phone());
 
-		let external_user_id = match BASE64_STANDARD.decode(external_id.clone()) {
-			Ok(bytes) => bytes.into(),
-			Err(_) => external_id.into(),
-		};
-
 		Ok(Self {
-			first_name: first_name.into(),
-			last_name: last_name.into(),
-			email: email.into(),
-			phone: phone.map(|phone| phone.clone().into()),
+			first_name,
+			last_name,
+			email,
+			phone: phone.cloned(),
 			preferred_username: None,
-			external_user_id,
+			external_user_id: external_id,
 			enabled: true,
 		})
 	}
@@ -104,122 +96,5 @@ impl std::fmt::Debug for User {
 			.field("external_user_id", &self.external_user_id)
 			.field("enabled", &self.enabled)
 			.finish()
-	}
-}
-
-/// A structure that can either be a string or bytes
-#[derive(Clone, Debug, Eq)]
-pub(crate) enum StringOrBytes {
-	/// A string
-	String(String),
-	/// A byte string
-	Bytes(Vec<u8>),
-}
-
-impl StringOrBytes {
-	/// Represent the object as raw bytes, regardless of whether it
-	/// can be represented as a string
-	pub fn as_bytes(&self) -> &[u8] {
-		match self {
-			Self::String(string) => string.as_bytes(),
-			Self::Bytes(bytes) => bytes,
-		}
-	}
-}
-
-impl PartialEq for StringOrBytes {
-	fn eq(&self, other: &Self) -> bool {
-		match (self, other) {
-			(Self::String(s), Self::String(o)) => s == o,
-			(Self::String(s), Self::Bytes(o)) => s.as_bytes() == o,
-			(Self::Bytes(s), Self::String(o)) => s == o.as_bytes(),
-			(Self::Bytes(s), Self::Bytes(o)) => s == o,
-		}
-	}
-}
-
-impl Ord for StringOrBytes {
-	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-		match (self, other) {
-			(Self::String(s), Self::String(o)) => s.cmp(o),
-			(Self::String(s), Self::Bytes(o)) => s.as_bytes().cmp(o.as_slice()),
-			(Self::Bytes(s), Self::String(o)) => s.as_slice().cmp(o.as_bytes()),
-			(Self::Bytes(s), Self::Bytes(o)) => s.cmp(o),
-		}
-	}
-}
-
-impl PartialOrd for StringOrBytes {
-	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-		Some(self.cmp(other))
-	}
-}
-
-impl Display for StringOrBytes {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			StringOrBytes::String(value) => write!(f, "{}", value),
-			StringOrBytes::Bytes(value) => write!(f, "{}", BASE64_STANDARD.encode(value)),
-		}
-	}
-}
-
-impl From<String> for StringOrBytes {
-	fn from(value: String) -> Self {
-		Self::String(value)
-	}
-}
-
-impl From<Vec<u8>> for StringOrBytes {
-	fn from(value: Vec<u8>) -> Self {
-		Self::Bytes(value)
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	fn strb_from_string(string: &str) -> StringOrBytes {
-		StringOrBytes::from(string.to_owned())
-	}
-
-	fn strb_from_bytes(bytes: &[u8]) -> StringOrBytes {
-		StringOrBytes::Bytes(bytes.to_owned())
-	}
-
-	#[test]
-	fn test_strb_equality() {
-		assert_eq!(strb_from_string("a"), strb_from_string("a"));
-		assert_ne!(strb_from_string("a"), strb_from_string("b"));
-
-		assert_eq!(strb_from_string("a"), strb_from_bytes(b"a"));
-		assert_ne!(strb_from_string("a"), strb_from_bytes(b"b"));
-
-		assert_eq!(strb_from_bytes(b"a"), strb_from_bytes(b"a"));
-		assert_ne!(strb_from_bytes(b"a"), strb_from_bytes(b"b"));
-
-		assert_eq!(strb_from_bytes(b"\xc3\x28"), strb_from_bytes(b"\xc3\x28"));
-		assert_ne!(strb_from_bytes(b"a"), strb_from_bytes(b"\xc3\x28"));
-	}
-
-	#[test]
-	fn test_strb_order() {
-		assert!(strb_from_string("a") < strb_from_string("b"));
-		assert!(strb_from_string("b") > strb_from_string("a"));
-		assert!(strb_from_string("b") < strb_from_string("c"));
-		assert!(strb_from_string("a") < strb_from_string("c"));
-
-		assert!(strb_from_bytes(b"a") < strb_from_bytes(b"b"));
-		assert!(strb_from_bytes(b"b") > strb_from_bytes(b"a"));
-		assert!(strb_from_bytes(b"b") < strb_from_bytes(b"c"));
-		assert!(strb_from_bytes(b"a") < strb_from_bytes(b"c"));
-
-		assert!(strb_from_string("a") < strb_from_bytes(b"b"));
-		assert!(strb_from_string("b") > strb_from_bytes(b"a"));
-		assert!(strb_from_string("b") < strb_from_bytes(b"c"));
-		assert!(strb_from_string("a") < strb_from_bytes(b"c"));
-
-		assert!(strb_from_bytes(b"\xc3\x28") < strb_from_bytes(b"\xc3\x29"));
 	}
 }
