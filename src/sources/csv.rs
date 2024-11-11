@@ -234,15 +234,7 @@ mod tests {
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 1, "Unexpected number of users");
-		assert_eq!(
-			users[0].email,
-			"jane.smith@example.com",
-			"Unexpected email at index 0"
-		);
-		assert_eq!(
-			users[0].last_name,
-			"Smith",
-			"Unexpected last name at index 0"
-		);
+		assert_eq!(users[0].email, "jane.smith@example.com", "Unexpected email at index 0");
+		assert_eq!(users[0].last_name, "Smith", "Unexpected last name at index 0");
 	}
 }

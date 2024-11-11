@@ -1,15 +1,15 @@
 #![cfg(test)]
+#![allow(clippy::expect_fun_call)]
 
 use std::{collections::HashSet, path::Path, time::Duration};
 
-use base64::prelude::{Engine, BASE64_STANDARD};
 use famedly_sync::{
 	csv_test_helpers::temp_csv_file,
 	perform_sync,
 	ukt_test_helpers::{
 		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
 	},
-	Config, FeatureFlag,
+	AttributeMapping, Config, FeatureFlag,
 };
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
 use test_log::test;
@@ -31,6 +31,198 @@ const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
 
 /// The Zitadel project role to assign to users.
 const FAMEDLY_USER_ROLE: &str = "User";
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_user_id_encoding() {
+	async fn verify_user_encoding(
+		ldap: &mut Ldap,
+		zitadel: &Zitadel,
+		config: &Config,
+		uid: &str,
+		email: &str,
+	) -> Result<(), String> {
+		let login_name = email;
+		let expected_hex_id = hex::encode(uid.as_bytes());
+
+		ldap.create_user("Test", "User", "TU", login_name, None, uid, false).await;
+
+		perform_sync(config).await.map_err(|e| format!("Sync failed: {}", e))?;
+
+		let user = zitadel
+			.get_user_by_login_name(login_name)
+			.await
+			.map_err(|e| format!("Failed to get user: {}", e))?
+			.ok_or_else(|| "User not found".to_owned())?;
+
+		match user.r#type {
+			Some(UserType::Human(user)) => {
+				let profile = user.profile.ok_or_else(|| "User lacks profile".to_owned())?;
+
+				if profile.nick_name != expected_hex_id {
+					return Err(format!(
+						"ID mismatch for '{}': expected '{}', got '{}'",
+						uid, expected_hex_id, profile.nick_name
+					));
+				}
+				Ok(())
+			}
+			_ => Err("User lacks human details".to_owned()),
+		}
+	}
+
+	/// Test cases for verifying correct user ID encoding
+	/// (uid, email)
+	const TEST_CASES: &[(&str, &str)] = &[
+		// Basic cases
+		("simple123", "simple123@example.com"),
+		("MiXed123Case", "mixed123case@example.com"),
+		// Special characters
+		("u.s-e_r", "user@example.com"),
+		("123", "123@example.com"),
+		// Unicode
+		("üsernamÉ", "username@example.com"),
+		("ὈΔΥΣΣΕΎΣ", "odysseus@example.com"),
+		("Потребител", "potrebitel@example.com"),
+		// Long string
+		("ThisIsAVeryLongUsernameThatShouldStillWork123456789", "long@example.com"),
+	];
+
+	// Run all test cases
+	let config = ldap_config().await;
+	let mut ldap = Ldap::new().await;
+	let zitadel = open_zitadel_connection().await;
+
+	for (uid, email) in TEST_CASES {
+		if let Err(error) = verify_user_encoding(&mut ldap, &zitadel, config, uid, email).await {
+			panic!("Test failed for ID '{}': {}", uid, error);
+		}
+	}
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_user_id_sync_ordering() {
+	struct TestUser<'a> {
+		uid: &'a str,
+		email: &'a str,
+		phone: &'a str,
+	}
+
+	const TEST_USERS: &[TestUser] = &[
+		TestUser { uid: "üser", email: "youser@example.com", phone: "+6666666666" },
+		TestUser { uid: "aaa", email: "aaa@example.com", phone: "+1111111111" },
+		TestUser { uid: "777", email: "777@example.com", phone: "+5555555555" },
+		TestUser { uid: "bbb", email: "bbb@example.com", phone: "+3333333333" },
+		TestUser { uid: "🦀", email: "crab@example.com", phone: "+1000000001" },
+		TestUser { uid: "한글", email: "korean@example.com", phone: "+1000000002" },
+		TestUser { uid: "عربي", email: "arabic@example.com", phone: "+1000000005" },
+	];
+
+	// Setup
+	let config = ldap_config().await;
+	let mut ldap = Ldap::new().await;
+	let zitadel = open_zitadel_connection().await;
+
+	// Create all users in LDAP
+	for user in TEST_USERS {
+		ldap.create_user("Test", "User", "TU", user.email, Some(user.phone), user.uid, false).await;
+	}
+
+	// Initial sync
+	perform_sync(config).await.expect("Initial sync failed");
+
+	// Verify all users exist with correct data
+	for user in TEST_USERS {
+		let expected_hex_id = hex::encode(user.uid.as_bytes());
+
+		let zitadel_user = zitadel
+			.get_user_by_login_name(user.email)
+			.await
+			.expect(&format!("Failed to get user {}", user.email))
+			.expect(&format!("User {} not found", user.email));
+
+		match zitadel_user.r#type {
+			Some(UserType::Human(human)) => {
+				// Verify ID encoding
+				let profile = human.profile.expect(&format!("User {} lacks profile", user.email));
+				assert_eq!(
+					profile.nick_name,
+					expected_hex_id,
+					"Wrong ID encoding for user {}, got '{:?}', expected '{:?}'",
+					user.email,
+					String::from_utf8_lossy(&hex::decode(profile.nick_name.clone()).unwrap()),
+					String::from_utf8_lossy(&hex::decode(expected_hex_id.clone()).unwrap())
+				);
+
+				// Verify phone number to ensure complete sync
+				let phone = human.phone.expect(&format!("User {} lacks phone", user.email));
+				assert_eq!(phone.phone, user.phone, "Wrong phone for user {}", user.email);
+			}
+			_ => panic!("User {} lacks human details", user.email),
+		}
+	}
+
+	// Now update all users with new data
+	for user in TEST_USERS {
+		ldap.change_user(
+			user.uid,
+			// Just change the last_name (sn) attribute to the user's uid with SN prefix
+			vec![("sn", HashSet::from([format!("SN{}", user.uid).as_str()]))],
+		)
+		.await;
+	}
+
+	// Sync again
+	perform_sync(config).await.expect("Update sync failed");
+
+	// Verify updates were applied in correct order
+	for user in TEST_USERS {
+		let zitadel_user = zitadel
+			.get_user_by_login_name(user.email)
+			.await
+			.expect(&format!("Failed to get updated user {}", user.email))
+			.expect(&format!("Updated user {} not found", user.email));
+
+		match zitadel_user.r#type {
+			Some(UserType::Human(human)) => {
+				let profile =
+					human.profile.expect(&format!("Updated user {} lacks profile", user.email));
+				let last_name = profile.last_name;
+				assert_eq!(
+					last_name,
+					format!("SN{}", user.uid),
+					"Wrong updated last_name for user {}",
+					user.email
+				);
+			}
+			_ => panic!("Updated user {} lacks human details", user.email),
+		}
+	}
+
+	// Finally delete users in reverse order
+	for user in TEST_USERS.iter().rev() {
+		ldap.delete_user(user.uid).await;
+	}
+
+	// Final sync
+	perform_sync(config).await.expect("Deletion sync failed");
+
+	// Verify all users were deleted in correct order
+	for user in TEST_USERS {
+		let result = zitadel.get_user_by_login_name(user.email).await;
+
+		assert!(
+			matches!(
+				result,
+				Err(ZitadelError::TonicResponseError(status))
+				if status.code() == TonicErrorCode::NotFound
+			),
+			"User {} still exists after deletion",
+			user.email
+		);
+	}
+}
 
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
@@ -88,7 +280,7 @@ async fn test_e2e_simple_sync() {
 		.expect("could not get user metadata");
 	assert_eq!(preferred_username, Some("Bobby".to_owned()));
 
-	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, "simple".as_bytes());
+	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, hex::encode("simple").as_bytes());
 
 	let localpart = zitadel
 		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
@@ -485,131 +677,217 @@ async fn test_e2e_sync_invalid_phone() {
 	}
 }
 
-// #[test(tokio::test)]
-// #[test_log(default_log_filter = "debug")]
-// async fn test_e2e_binary_attr() {
-// 	let mut config = ldap_config().await.clone();
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_binary_uid() {
+	let mut config = ldap_config().await.clone();
 
-// 	// OpenLDAP checks if types match, so we need to use an attribute
-// 	// that can actually be binary.
-// 	config
-// 		.sources
-// 		.ldap
-// 		.as_mut()
-// 		.expect("ldap must be configured for this test")
-// 		.attributes
-// 		.preferred_username = AttributeMapping::OptionalBinary {
-// 		name: "userSMIMECertificate".to_owned(),
-// 		is_binary: true,
-// 	};
+	// Attribute uid (user_id) is configured as binary
 
-// 	let mut ldap = Ldap::new().await;
-// 	ldap.create_user(
-// 		"Bob",
-// 		"Tables",
-// 		"Bobby",
-// 		"binary@famedly.de",
-// 		Some("+12015550123"),
-// 		"binary",
-// 		false,
-// 	)
-// 	.await;
-// 	ldap.change_user(
-// 		"binary",
-// 		vec![(
-// 			"userSMIMECertificate".as_bytes(),
-// 			// It's important that this is invalid UTF-8
-// 			HashSet::from([[0xA0, 0xA1].as_slice()]),
-// 		)],
-// 	)
-// 	.await;
+	config
+		.sources
+		.ldap
+		.as_mut()
+		.expect("ldap must be configured for this test")
+		.attributes
+		.user_id = AttributeMapping::OptionalBinary {
+		name: "userSMIMECertificate".to_owned(),
+		is_binary: true,
+	};
 
-// 	let org_id = config.zitadel.organization_id.clone();
+	let mut ldap = Ldap::new().await;
 
-// 	perform_sync(&config).await.expect("syncing failed");
+	// Create test user with binary ID
+	let uid = "binary_user";
+	let binary_uid = uid.as_bytes();
+	ldap.create_user(
+		"Binary",
+		"User",
+		"BinaryTest",
+		"binary_id@famedly.de",
+		Some("+12345678901"),
+		uid, // Regular uid for DN
+		false,
+	)
+	.await;
 
-// 	let zitadel = open_zitadel_connection().await;
-// 	let user = zitadel
-// 		.get_user_by_login_name("binary@famedly.de")
-// 		.await
-// 		.expect("could not query Zitadel users");
+	// Set binary ID
+	ldap.change_user(
+		uid,
+		vec![("userSMIMECertificate".as_bytes(), HashSet::from([uid.as_bytes()]))],
+	)
+	.await;
 
-// 	assert!(user.is_some());
+	perform_sync(&config).await.expect("syncing failed");
 
-// 	if let Some(user) = user {
-// 		let preferred_username = zitadel
-// 			.get_user_metadata(Some(org_id), &user.id, "preferred_username")
-// 			.await
-// 			.expect("could not get user metadata");
+	let zitadel = open_zitadel_connection().await;
+	let user = zitadel
+		.get_user_by_login_name("binary_id@famedly.de")
+		.await
+		.expect("could not query Zitadel users")
+		.expect("user not found");
 
-// 		assert_eq!(
-// 			preferred_username
-// 				.map(|u| BASE64_STANDARD.decode(u).expect("failed to decode binary attr")),
-// 			Some([0xA0, 0xA1].to_vec())
-// 		);
-// 	}
-// }
+	match user.r#type {
+		Some(UserType::Human(user)) => {
+			let profile = user.profile.expect("user lacks profile");
+			// The ID should be hex encoded in Zitadel
+			assert_eq!(profile.nick_name, hex::encode(binary_uid));
+		}
+		_ => panic!("user lacks human details"),
+	}
 
-// #[test(tokio::test)]
-// #[test_log(default_log_filter = "debug")]
-// async fn test_e2e_binary_attr_valid_utf8() {
-// 	let mut config = ldap_config().await.clone();
+	// Test update to a different binary ID that is valid UTF-8
 
-// 	// OpenLDAP checks if types match, so we need to use an attribute
-// 	// that can actually be binary.
-// 	config
-// 		.sources
-// 		.ldap
-// 		.as_mut()
-// 		.expect("ldap must be configured for this test")
-// 		.attributes
-// 		.preferred_username = AttributeMapping::OptionalBinary {
-// 		name: "userSMIMECertificate".to_owned(),
-// 		is_binary: true,
-// 	};
+	let new_binary_id = "updated_binary_user".as_bytes();
+	ldap.change_user(
+		uid,
+		vec![("userSMIMECertificate".as_bytes(), HashSet::from([new_binary_id]))],
+	)
+	.await;
 
-// 	let mut ldap = Ldap::new().await;
-// 	ldap.create_user(
-// 		"Bob",
-// 		"Tables",
-// 		"Bobby",
-// 		"binaryutf8@famedly.de",
-// 		Some("+12015550123"),
-// 		"binaryutf8",
-// 		false,
-// 	)
-// 	.await;
-// 	ldap.change_user(
-// 		"binaryutf8",
-// 		vec![("userSMIMECertificate".as_bytes(), HashSet::from(["validutf8".as_bytes()]))],
-// 	)
-// 	.await;
+	perform_sync(&config).await.expect("syncing failed");
 
-// 	let org_id = config.zitadel.organization_id.clone();
+	let user = zitadel
+		.get_user_by_login_name("binary_id@famedly.de")
+		.await
+		.expect("could not query Zitadel users")
+		.expect("user not found after update");
 
-// 	perform_sync(&config).await.expect("syncing failed");
+	match user.r#type {
+		Some(UserType::Human(user)) => {
+			let profile = user.profile.expect("user lacks profile");
+			println!("profile: {:#?}", profile);
+			// Verify ID was updated
+			assert_eq!(profile.nick_name, hex::encode(&new_binary_id));
+		}
+		_ => panic!("user lost human details after update"),
+	}
 
-// 	let zitadel = open_zitadel_connection().await;
-// 	let user = zitadel
-// 		.get_user_by_login_name("binaryutf8@famedly.de")
-// 		.await
-// 		.expect("could not query Zitadel users");
+	// Test update to binary ID that is NOT valid UTF-8
 
-// 	assert!(user.is_some());
+	let invalid_binary_id = [0xA1, 0xA2];
+	ldap.change_user(
+		uid,
+		vec![("userSMIMECertificate".as_bytes(), HashSet::from([invalid_binary_id.as_slice()]))],
+	)
+	.await;
 
-// 	if let Some(user) = user {
-// 		let preferred_username = zitadel
-// 			.get_user_metadata(Some(org_id), &user.id, "preferred_username")
-// 			.await
-// 			.expect("could not get user metadata");
+	perform_sync(&config).await.expect("syncing failed");
 
-// 		assert_eq!(
-// 			preferred_username
-// 				.map(|u| BASE64_STANDARD.decode(u).expect("failed to decode binary attr")),
-// 			Some("validutf8".as_bytes().to_vec())
-// 		);
-// 	}
-// }
+	let user = zitadel
+		.get_user_by_login_name("binary_id@famedly.de")
+		.await
+		.expect("could not query Zitadel users")
+		.expect("user not found after update");
+
+	match user.r#type {
+		Some(UserType::Human(user)) => {
+			let profile = user.profile.expect("user lacks profile");
+			// Verify ID was updated
+			assert_eq!(profile.nick_name, hex::encode(&invalid_binary_id));
+		}
+		_ => panic!("user lost human details after update"),
+	}
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_binary_preferred_username() {
+	let mut config = ldap_config().await.clone();
+
+	// Attribute preferred_username is configured as binary but shouldn't be
+
+	config
+		.sources
+		.ldap
+		.as_mut()
+		.expect("ldap must be configured for this test")
+		.attributes
+		.preferred_username = AttributeMapping::OptionalBinary {
+		name: "userSMIMECertificate".to_owned(),
+		is_binary: true,
+	};
+
+	let mut ldap = Ldap::new().await;
+	ldap.create_user(
+		"BobFail",
+		"TablesFail",
+		"BobbyFail",
+		"binary_fail@famedly.de",
+		Some("+12015550123"),
+		"binary_fail",
+		false,
+	)
+	.await;
+
+	// Test with a valid UTF-8 binary attribute
+
+	ldap.change_user(
+		"binary_fail",
+		vec![("userSMIMECertificate".as_bytes(), HashSet::from(["new_binary_fail".as_bytes()]))],
+	)
+	.await;
+
+	let result = tokio::spawn({
+		let config = config.clone();
+		async move { perform_sync(&config).await }
+	})
+	.await;
+
+	match result {
+		Ok(sync_result) => {
+			assert!(sync_result.is_err());
+			let error = sync_result.unwrap_err();
+			assert!(error.to_string().contains("Failed to query users from LDAP"));
+			if let Some(cause) = error.source() {
+				assert!(cause.to_string().contains("Binary values are not accepted"));
+				assert!(cause.to_string().contains("attribute `userSMIMECertificate`"));
+			} else {
+				panic!("Expected error to have a cause");
+			}
+		}
+		Err(join_error) if join_error.is_panic() => {
+			panic!("perform_sync panicked unexpectedly: {}", join_error);
+		}
+		Err(e) => {
+			panic!("unexpected error: {}", e);
+		}
+	}
+
+	// Test with an invalid UTF-8 binary attribute
+
+	ldap.change_user(
+		"binary_fail",
+		vec![("userSMIMECertificate".as_bytes(), HashSet::from([[0xA0, 0xA1].as_slice()]))],
+	)
+	.await;
+
+	let result = tokio::spawn({
+		let config = config.clone();
+		async move { perform_sync(&config).await }
+	})
+	.await;
+
+	match result {
+		Ok(sync_result) => {
+			assert!(sync_result.is_err());
+			let error = sync_result.unwrap_err();
+			assert!(error.to_string().contains("Failed to query users from LDAP"));
+			if let Some(cause) = error.source() {
+				assert!(cause.to_string().contains("Binary values are not accepted"));
+				assert!(cause.to_string().contains("attribute `userSMIMECertificate`"));
+			} else {
+				panic!("Expected error to have a cause");
+			}
+		}
+		Err(join_error) if join_error.is_panic() => {
+			panic!("perform_sync panicked unexpectedly: {}", join_error);
+		}
+		Err(e) => {
+			panic!("unexpected error: {}", e);
+		}
+	}
+}
 
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
