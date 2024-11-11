@@ -2,9 +2,8 @@
 
 use std::{fmt::Display, path::PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use base64::prelude::{Engine, BASE64_STANDARD};
 use ldap_poller::{
 	config::TLSConfig, ldap::EntryStatus, ldap3::SearchEntry, AttributeConfig, CacheMethod,
 	ConnectionConfig, Ldap, SearchEntryExt, Searches,
@@ -101,9 +100,9 @@ impl LdapSource {
 		};
 
 		let ldap_user_id = match read_search_entry(&entry, &self.ldap_config.attributes.user_id)? {
-			// TODO(tlater): Use an encoding that preserves alphabetic order
-			StringOrBytes::Bytes(byte_id) => BASE64_STANDARD.encode(byte_id),
-			StringOrBytes::String(string_id) => BASE64_STANDARD.encode(string_id),
+			// Use hex encoding instead of base64 for consistent alphabetical order
+			StringOrBytes::Bytes(byte_id) => hex::encode(byte_id),
+			StringOrBytes::String(string_id) => hex::encode(string_id.as_bytes()),
 		};
 
 		let first_name =
@@ -139,9 +138,11 @@ fn read_string_entry(
 ) -> Result<String> {
 	match read_search_entry(entry, attribute)? {
 		StringOrBytes::String(entry) => Ok(entry),
-		StringOrBytes::Bytes(_) => {
-			Err(anyhow!("Unacceptable binary value for {} of user `{}`", attribute, id))
-		}
+		StringOrBytes::Bytes(_) => Err(anyhow!(
+			"Binary values are not accepted: attribute `{}` of user `{}`",
+			attribute,
+			id
+		)),
 	}
 }
 
@@ -354,7 +355,6 @@ enum StringOrBytes {
 mod tests {
 	use std::collections::HashMap;
 
-	use base64::prelude::{Engine, BASE64_STANDARD};
 	use indoc::indoc;
 	use ldap3::SearchEntry;
 	use ldap_poller::ldap::EntryStatus;
@@ -540,7 +540,7 @@ mod tests {
 		assert_eq!(user.email, "testuser@example.com");
 		assert_eq!(user.phone, Some("123456789".to_owned()));
 		assert_eq!(user.preferred_username, Some("testuser".to_owned()));
-		assert_eq!(user.external_user_id, BASE64_STANDARD.encode("testuser"));
+		assert_eq!(user.external_user_id, hex::encode("testuser"));
 		assert!(user.enabled);
 	}
 
@@ -549,8 +549,7 @@ mod tests {
 		let mut config = load_config();
 		config.sources.ldap.as_mut().unwrap().attributes.disable_bitmasks =
 			serde_yaml::from_str("[0]").expect("invalid config fragment");
-		let ldap_source =
-			LdapSource { ldap_config: config.sources.ldap.unwrap(), is_dry_run: false };
+		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
 
 		for (attr, parsed) in [("TRUE", true), ("FALSE", false)] {
 			let entry = SearchEntry {

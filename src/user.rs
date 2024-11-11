@@ -1,5 +1,5 @@
 //! User data helpers
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use uuid::{uuid, Uuid};
 use zitadel_rust_client::v2::users::HumanUser;
 
@@ -64,12 +64,19 @@ impl User {
 		format!("{}, {}", self.last_name, self.first_name)
 	}
 
-	/// Return the user's UUID according to the Famedly UUID spec.
-	///
-	/// See
-	/// https://www.notion.so/famedly/Famedly-UUID-Specification-adc576f0f2d449bba2f6f13b2611738f
-	pub fn famedly_uuid(&self) -> String {
-		Uuid::new_v5(&FAMEDLY_NAMESPACE, self.external_user_id.as_bytes()).to_string()
+	/// Get the external user ID in raw byte form
+	pub fn get_external_id_bytes(&self) -> Result<Vec<u8>> {
+		// This looks ugly at a glance, since we get the original
+		// bytes at some point, however some users will be retrieved
+		// from Zitadel at a later point, so we cannot assume that we
+		// know the original bytes, and must always decode the
+		// external user ID to get those.
+		hex::decode(&self.external_user_id).context("Invalid external user ID")
+	}
+
+	/// Get the famedly UUID of this user
+	pub fn get_famedly_uuid(&self) -> Result<String> {
+		Ok(Uuid::new_v5(&FAMEDLY_NAMESPACE, self.get_external_id_bytes()?.as_slice()).to_string())
 	}
 }
 

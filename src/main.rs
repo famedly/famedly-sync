@@ -20,7 +20,7 @@ async fn main() -> ExitCode {
 #[allow(clippy::print_stderr)]
 async fn run_sync() -> Result<()> {
 	let config = {
-		let config_path = std::env::var("FAMEDLY_LDAP_SYNC_CONFIG").unwrap_or("config.yaml".into());
+		let config_path = std::env::var("FAMEDLY_SYNC_CONFIG").unwrap_or("config.yaml".into());
 		let config_path = Path::new(&config_path);
 		match Config::new(config_path) {
 			Ok(config) => config,
