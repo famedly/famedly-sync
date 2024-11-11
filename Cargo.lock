@@ -722,6 +722,7 @@ dependencies = [
  "config",
  "csv",
  "futures",
+ "hex",
  "http 1.1.0",
  "indoc",
  "ldap-poller",
