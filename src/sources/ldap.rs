@@ -2,7 +2,7 @@
 
 use std::{fmt::Display, path::PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use ldap_poller::{
 	config::TLSConfig, ldap::EntryStatus, ldap3::SearchEntry, AttributeConfig, CacheMethod,
@@ -549,8 +549,7 @@ mod tests {
 		let mut config = load_config();
 		config.sources.ldap.as_mut().unwrap().attributes.disable_bitmasks =
 			serde_yaml::from_str("[0]").expect("invalid config fragment");
-		let ldap_source =
-			LdapSource { ldap_config: config.sources.ldap.unwrap(), is_dry_run: false };
+		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
 
 		for (attr, parsed) in [("TRUE", true), ("FALSE", false)] {
 			let entry = SearchEntry {

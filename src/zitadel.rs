@@ -1,7 +1,7 @@
 //! Helper functions for submitting data to Zitadel
 use std::path::PathBuf;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use url::Url;
