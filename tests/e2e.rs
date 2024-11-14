@@ -1,6 +1,6 @@
 #![cfg(test)]
 #![allow(clippy::expect_fun_call)]
-
+/// E2E integration tests
 use std::{collections::HashSet, path::Path, time::Duration};
 
 use famedly_sync::{
