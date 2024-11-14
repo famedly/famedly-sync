@@ -1,7 +1,7 @@
 //! Helper functions for submitting data to Zitadel
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use url::Url;
@@ -126,23 +126,11 @@ impl Zitadel {
 			return Ok(());
 		}
 
-		let id = match &imported_user.external_user_id {
-			StringOrBytes::String(value) => value.as_bytes(),
-			StringOrBytes::Bytes(value) => value,
-		};
-
 		let localpart = if self.feature_flags.contains(&FeatureFlag::PlainLocalpart) {
-			match &imported_user.external_user_id {
-				StringOrBytes::String(value) => value,
-				StringOrBytes::Bytes(_) => {
-					bail!(
-						"Unsupported binary external ID for user using plain localparts: {:?}",
-						user
-					);
-				}
-			}
+			String::from_utf8(imported_user.get_external_id_bytes()?)
+				.context(format!("Unsupported binary external ID for user: {:?}", imported_user))?
 		} else {
-			imported_user.famedly_uuid()
+			imported_user.get_famedly_uuid()?
 		};
 
 		let mut metadata = vec![SetMetadataEntry::new("localpart".to_owned(), localpart)];

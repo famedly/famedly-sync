@@ -280,7 +280,7 @@ async fn test_e2e_simple_sync() {
 		.expect("could not get user metadata");
 	assert_eq!(preferred_username, Some("Bobby".to_owned()));
 
-	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, hex::encode("simple").as_bytes());
+	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, "simple".as_bytes());
 
 	let localpart = zitadel
 		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
