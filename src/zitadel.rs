@@ -162,7 +162,7 @@ impl Zitadel {
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
 			user.set_idp_links(vec![IdpLink::new()
-				.with_user_id(imported_user.external_user_id.clone())
+				.with_user_id(imported_user.get_string_id().context("Failed to set IDP user ID")?)
 				.with_idp_id(self.zitadel_config.idp_id.clone())
 				// TODO: Figure out if this is the correct value; empty is not permitted
 				.with_user_name(imported_user.email.clone())]);

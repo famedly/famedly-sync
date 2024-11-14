@@ -79,6 +79,25 @@ impl User {
 	pub fn get_famedly_uuid(&self) -> Result<String> {
 		Ok(Uuid::new_v5(&FAMEDLY_NAMESPACE, self.get_external_id_bytes()?.as_slice()).to_string())
 	}
+
+	/// Get a base64-encoded external user ID, if the ID is raw bytes,
+	/// or a UTF-8 string if not.
+	///
+	/// Note: This encoding scheme is inherently broken, because it is
+	/// impossible to tell apart base64 encoded strings from
+	/// non-base64 encoded strings. We can therefore never know if the
+	/// ID should be decoded or not when re-parsing it, and it may
+	/// create collisions (although this is unlikely).
+	///
+	/// Only use this for Zitadel support.
+	pub fn get_string_id(&self) -> Result<String> {
+		let id = self.get_external_id_bytes()?;
+		Ok(if let Ok(encoded_id) = String::from_utf8(id.clone()) {
+			encoded_id
+		} else {
+			BASE64_STANDARD.encode(id)
+		})
+	}
 }
 
 impl PartialEq for User {
