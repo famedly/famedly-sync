@@ -1,6 +1,7 @@
 //! E2E integration tests
 
 #![cfg(test)]
+/// E2E integration tests
 use std::{collections::HashSet, path::Path, time::Duration};
 
 use famedly_sync::{
