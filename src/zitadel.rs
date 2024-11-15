@@ -2,6 +2,7 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
+use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use url::Url;
@@ -162,7 +163,10 @@ impl Zitadel {
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
 			user.set_idp_links(vec![IdpLink::new()
-				.with_user_id(imported_user.get_string_id().context("Failed to set IDP user ID")?)
+				.with_user_id(
+					get_string_id(imported_user.get_external_id_bytes()?)
+						.context("Failed to set IDP user ID")?,
+				)
 				.with_idp_id(self.zitadel_config.idp_id.clone())
 				// TODO: Figure out if this is the correct value; empty is not permitted
 				.with_user_name(imported_user.email.clone())]);
@@ -304,6 +308,24 @@ fn search_result_to_user(user: ZitadelUser) -> Result<User> {
 	// here.
 	let user = User::try_from_zitadel_user(human_user.clone(), nick_name.clone())?;
 	Ok(user)
+}
+
+/// Get a base64-encoded external user ID, if the ID is raw bytes,
+/// or a UTF-8 string if not.
+///
+/// Note: This encoding scheme is inherently broken, because it is
+/// impossible to tell apart base64 encoded strings from
+/// non-base64 encoded strings. We can therefore never know if the
+/// ID should be decoded or not when re-parsing it, and it may
+/// create collisions (although this is unlikely).
+///
+/// Only use this for Zitadel support.
+pub fn get_string_id(external_id_bytes: Vec<u8>) -> Result<String> {
+	Ok(if let Ok(encoded_id) = String::from_utf8(external_id_bytes.clone()) {
+		encoded_id
+	} else {
+		BASE64_STANDARD.encode(external_id_bytes)
+	})
 }
 
 /// Configuration related to Famedly Zitadel
