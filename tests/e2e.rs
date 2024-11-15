@@ -1,3 +1,5 @@
+//! E2E integration tests
+
 #![cfg(test)]
 use std::{collections::HashSet, path::Path, time::Duration};
 
@@ -1347,6 +1349,49 @@ async fn test_e2e_ldap_with_ukt_sync() {
 	}
 	let user = zitadel.get_user_by_login_name("not_to_be_there_later@famedly.de").await;
 	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_sso_linking() {
+	let mut config = ldap_config().await.clone();
+	config.feature_flags.push(FeatureFlag::SsoLogin);
+
+	let mut ldap = Ldap::new().await;
+	let test_email = "sso_link_test@famedly.de";
+	let test_uid = "sso_link_test";
+	ldap.create_user(
+		"SSO",
+		"LinkTest",
+		"SSO Link",
+		test_email,
+		Some("+12015550199"),
+		test_uid,
+		false,
+	)
+	.await;
+
+	perform_sync(&config).await.expect("syncing failed");
+
+	let zitadel = open_zitadel_connection().await;
+	let user = zitadel
+		.get_user_by_login_name(test_email)
+		.await
+		.expect("could not query Zitadel users")
+		.expect("could not find user");
+
+	let idps = zitadel.list_user_idps(user.id.clone()).await.expect("could not get user IDPs");
+
+	assert!(!idps.is_empty(), "User should have IDP links");
+
+	let idp = idps.first().expect("No IDP link found");
+	assert_eq!(idp.idp_id, config.zitadel.idp_id, "IDP link should match configured IDP");
+	assert_eq!(idp.provided_user_id, test_uid, "IDP provided_user_id should match plain LDAP uid");
+	assert_eq!(idp.user_id, user.id, "IDP user_id should match Zitadel user id");
+	assert_eq!(
+		idp.provided_user_name, test_email,
+		"IDP provided_user_name should match test_email"
+	);
 }
 
 struct Ldap {

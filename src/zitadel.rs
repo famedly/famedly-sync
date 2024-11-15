@@ -164,7 +164,7 @@ impl Zitadel {
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
 			user.set_idp_links(vec![IdpLink::new()
 				.with_user_id(
-					get_string_id(imported_user.get_external_id_bytes()?)
+					get_zitadel_encoded_id(imported_user.get_external_id_bytes()?)
 						.context("Failed to set IDP user ID")?,
 				)
 				.with_idp_id(self.zitadel_config.idp_id.clone())
@@ -320,7 +320,7 @@ fn search_result_to_user(user: ZitadelUser) -> Result<User> {
 /// create collisions (although this is unlikely).
 ///
 /// Only use this for Zitadel support.
-pub fn get_string_id(external_id_bytes: Vec<u8>) -> Result<String> {
+pub fn get_zitadel_encoded_id(external_id_bytes: Vec<u8>) -> Result<String> {
 	Ok(if let Ok(encoded_id) = String::from_utf8(external_id_bytes.clone()) {
 		encoded_id
 	} else {
