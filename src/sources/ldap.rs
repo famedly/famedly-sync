@@ -81,7 +81,9 @@ impl LdapSource {
 		let enabled = if disable_bitmask != 0 {
 			disable_bitmask
 				& match status {
-					StringOrBytes::String(status) => status.parse::<i32>()?,
+					StringOrBytes::String(status) => {
+						status.parse::<i32>().context("failed to parse status attribute")?
+					}
 					StringOrBytes::Bytes(status) => {
 						i32::from_be_bytes(status.try_into().map_err(|err: Vec<u8>| {
 							let err_string = String::from_utf8_lossy(&err).to_string();
