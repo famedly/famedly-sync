@@ -32,6 +32,7 @@ jobs:
         gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
     - name: Caching
+
       uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
       with:
         cache-on-failure: true
@@ -105,4 +106,3 @@ jobs:
       uses: codecov/test-results-action@v1
       with:
         token: ${{secrets.CODECOV_TOKEN}}
-
