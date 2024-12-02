@@ -39,7 +39,7 @@ jobs:
           gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
       - name: Caching
-        uses: Swatinem/rust-cache@b8a6852b4f997182bdea832df3f9e153038b5191
+        uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
         with:
           cache-on-failure: true
           cache-all-crates: true
@@ -87,7 +87,7 @@ jobs:
           gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
       - name: Caching
-        uses: Swatinem/rust-cache@b8a6852b4f997182bdea832df3f9e153038b5191
+        uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
         with:
           cache-on-failure: true
           cache-all-crates: true
@@ -146,4 +146,3 @@ jobs:
           files: artifacts/*
           prerelease: "${{ contains(github.ref_name, 'rc') }}"
           generate_release_notes: true
-
