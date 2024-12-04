@@ -7,7 +7,7 @@ use zitadel_rust_client::v1::{Email, Gender, Idp, ImportHumanUserRequest, Phone,
 use crate::{config::FeatureFlags, FeatureFlag};
 
 /// Source-agnostic representation of a user
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct User {
 	/// The user's first name
 	pub(crate) first_name: StringOrBytes,
@@ -37,6 +37,20 @@ impl User {
 	}
 }
 
+impl std::fmt::Debug for User {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("User")
+			.field("first_name", &"***")
+			.field("last_name", &"***")
+			.field("email", &"***")
+			.field("phone", &"***")
+			.field("preferred_username", &"***")
+			.field("external_user_id", &self.external_user_id)
+			.field("enabled", &self.enabled)
+			.finish()
+	}
+}
+
 /// Crate-internal representation of a Zitadel user
 #[derive(Clone, Debug)]
 pub struct ZitadelUser {
@@ -59,7 +73,7 @@ impl ZitadelUser {
 
 	/// Return the name to be used in logs to identify this user
 	pub(crate) fn log_name(&self) -> String {
-		format!("email={}", &self.user_data.email)
+		format!("external_id={}", &self.user_data.external_user_id)
 	}
 
 	/// Get idp link as required by Zitadel
@@ -108,7 +122,7 @@ impl From<ZitadelUser> for ImportHumanUserRequest {
 
 impl Display for ZitadelUser {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "email={}", &self.user_data.email)
+		write!(f, "external_id={}", &self.user_data.external_user_id)
 	}
 }
 
