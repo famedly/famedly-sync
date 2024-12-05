@@ -143,17 +143,14 @@ kubectl create configmap --from-file config.yaml famedly-sync --namespace ldap-s
 
 ## Quirks & Edge Cases
 
+- When Setting up SSO, note that Zitadel's ldap filter must be
+  configured to resolve the "username" as the user's email address for
+  our IDP links to work.
 - Changing a user's LDAP id (the attribute from the `user_id` setting)
   is unsupported, as this is used to identify the user on the Zitadel
   end.
 - Disabling a user on the LDAP side (with `status`) results in the
   user being deleted from Zitadel.
-- Providing multiple values for an LDAP attribute is not supported.
-- Zitadel's API is not fully atomic; if a request fails, a user may
-  not be fully created and still not be functional even if the tool is
-  re-used.
-  - In particular, the matrix localpart, the preferred user name, and
-    whether the user has permissions to use Famedly may not be synced.
 - If a user's email or phone number changes, they will only be
   prompted to verify it if the tool is configured to make users verify
   them.
