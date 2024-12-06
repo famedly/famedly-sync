@@ -6,8 +6,8 @@ use zitadel::Zitadel;
 
 mod config;
 mod sources;
-mod user;
-mod zitadel;
+pub mod user;
+pub mod zitadel;
 
 use std::collections::VecDeque;
 
@@ -21,7 +21,7 @@ use sources::{csv::CsvSource, ldap::LdapSource, ukt::UktSource, Source};
 /// Helper function to add metadata to streamed zitadel users
 // TODO: If async closures become a reality, this should be factored
 // into the `zitadel::search_result_to_user` function
-async fn get_next_zitadel_user(
+pub async fn get_next_zitadel_user(
 	stream: &mut (impl Stream<Item = Result<(User, String)>> + Send + Unpin),
 	zitadel: &mut Zitadel,
 ) -> Result<Option<(User, String)>> {

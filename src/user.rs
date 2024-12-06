@@ -1,14 +1,26 @@
 //! User data helpers
 use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use uuid::{uuid, Uuid};
 use zitadel_rust_client::v2::users::HumanUser;
 
 /// The Famedly UUID namespace to use to generate v5 UUIDs.
 const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
 
+/// The encoding of the external ID in the database
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExternalIdEncoding {
+	/// The external ID is stored as a hex string
+	Hex,
+	/// The external ID is stored as a base64 string
+	Base64,
+	/// The external ID is stored as a plain string
+	Plain,
+}
+
 /// Source-agnostic representation of a user
 #[derive(Clone)]
-pub(crate) struct User {
+pub struct User {
 	/// The user's first name
 	pub(crate) first_name: String,
 	/// The user's last name
@@ -26,6 +38,20 @@ pub(crate) struct User {
 }
 
 impl User {
+	/// Create a new user instance, used in tests
+	#[allow(clippy::must_use_candidate)]
+	pub fn new(
+		first_name: String,
+		last_name: String,
+		email: String,
+		phone: Option<String>,
+		enabled: bool,
+		preferred_username: Option<String>,
+		external_user_id: String,
+	) -> Self {
+		Self { first_name, last_name, email, phone, enabled, preferred_username, external_user_id }
+	}
+
 	/// Convert a Zitadel user to our internal representation
 	pub fn try_from_zitadel_user(user: HumanUser, external_id: String) -> Result<Self> {
 		let first_name = user
@@ -60,8 +86,15 @@ impl User {
 	}
 
 	/// Get a display name for this user
+	#[must_use]
 	pub fn get_display_name(&self) -> String {
 		format!("{}, {}", self.last_name, self.first_name)
+	}
+
+	/// Get the external user ID
+	#[must_use]
+	pub fn get_external_id(&self) -> &str {
+		&self.external_user_id
 	}
 
 	/// Get the external user ID in raw byte form
@@ -77,6 +110,72 @@ impl User {
 	/// Get the famedly UUID of this user
 	pub fn get_famedly_uuid(&self) -> Result<String> {
 		Ok(Uuid::new_v5(&FAMEDLY_NAMESPACE, self.get_external_id_bytes()?.as_slice()).to_string())
+	}
+
+	/// Convert external user ID to a new format based on the detected encoding
+	pub fn create_user_with_converted_external_id(
+		&self,
+		expected_encoding: ExternalIdEncoding,
+	) -> Result<User> {
+		// Double check the encoding
+		match &self.external_user_id {
+			s if s.is_empty() => {
+				tracing::warn!(?self, "Skipping user due to empty uid");
+				return Ok(self.clone());
+			}
+			s if s.chars().all(|c| c.is_ascii_hexdigit()) && s.len() % 2 == 0 => {
+				// Looks like hex encoding
+				if expected_encoding != ExternalIdEncoding::Hex {
+					tracing::warn!(
+					  ?self,
+					  ?expected_encoding,
+					  detected_encoding = ?ExternalIdEncoding::Hex,
+					  "Encoding mismatch detected"
+					);
+				}
+			}
+			s if s
+				.chars()
+				.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+				&& s.len() % 4 == 0 =>
+			{
+				// Looks like base64 encoding
+				if expected_encoding != ExternalIdEncoding::Base64 {
+					tracing::warn!(
+					  ?self,
+					  ?expected_encoding,
+					  detected_encoding = ?ExternalIdEncoding::Base64,
+					  "Encoding mismatch detected"
+					);
+				}
+			}
+			_ => {
+				// Plain or unknown encoding
+				if expected_encoding != ExternalIdEncoding::Plain {
+					tracing::warn!(
+						?self,
+						?expected_encoding,
+						detected_encoding = ?ExternalIdEncoding::Plain,
+						"Encoding mismatch detected"
+					);
+				}
+			}
+		};
+
+		let new_external_id = match expected_encoding {
+			ExternalIdEncoding::Hex => self.external_user_id.clone(),
+			ExternalIdEncoding::Base64 => {
+				if let Ok(decoded) = general_purpose::STANDARD.decode(&self.external_user_id) {
+					hex::encode(decoded)
+				} else {
+					tracing::warn!(?self, "Failed to decode base64 ID despite database heuristic");
+					hex::encode(self.external_user_id.as_bytes())
+				}
+			}
+			ExternalIdEncoding::Plain => hex::encode(self.external_user_id.as_bytes()),
+		};
+
+		Ok(Self { external_user_id: new_external_id, ..self.clone() })
 	}
 }
 
