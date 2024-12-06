@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{Stream, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 use zitadel_rust_client::{
 	v1::Zitadel as ZitadelClientV1,
@@ -20,6 +20,7 @@ use zitadel_rust_client::{
 
 use crate::{
 	config::{Config, FeatureFlags},
+	get_next_zitadel_user,
 	user::User,
 	FeatureFlag,
 };
@@ -27,9 +28,12 @@ use crate::{
 /// The Zitadel project role to assign to users.
 const FAMEDLY_USER_ROLE: &str = "User";
 
+/// The number of users to sample for encoding detection
+const USER_SAMPLE_SIZE: usize = 10;
+
 /// A very high-level Zitadel zitadel_client
-#[derive(Clone)]
-pub(crate) struct Zitadel {
+#[derive(Clone, Debug)]
+pub struct Zitadel {
 	/// Zitadel configuration
 	zitadel_config: ZitadelConfig,
 	/// Optional set of features
@@ -43,7 +47,7 @@ pub(crate) struct Zitadel {
 
 impl Zitadel {
 	/// Construct the Zitadel instance
-	pub(crate) async fn new(config: &Config) -> Result<Self> {
+	pub async fn new(config: &Config) -> Result<Self> {
 		let zitadel_client =
 			ZitadelClient::new(config.zitadel.url.clone(), config.zitadel.key_file.clone())
 				.await
@@ -106,6 +110,36 @@ impl Zitadel {
 			})
 	}
 
+	/// Return a vector of a random sample of Zitadel users
+	/// We use this to determine the encoding of the external IDs
+	pub async fn get_users_sample(&mut self) -> Result<Vec<User>> {
+		let mut stream = self
+			.zitadel_client
+			.list_users(
+				ListUsersRequest::new(vec![
+					SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))
+				])
+				.with_asc(true)
+				.with_sorting_column(UserFieldName::NickName)
+				.with_page_size(USER_SAMPLE_SIZE),
+			)
+			.map(|stream| {
+				stream.map(|user| {
+					let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
+					let user = search_result_to_user(user)?;
+					Ok((user, id))
+				})
+			})?;
+
+		let mut users = Vec::new();
+
+		while let Some(user) = get_next_zitadel_user(&mut stream, self).await? {
+			users.push(user.0);
+		}
+
+		Ok(users)
+	}
+
 	/// Delete a Zitadel user
 	pub async fn delete_user(&mut self, zitadel_id: &str) -> Result<()> {
 		tracing::info!("Deleting user with Zitadel ID: {}", zitadel_id);
@@ -163,10 +197,7 @@ impl Zitadel {
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
 			user.set_idp_links(vec![IdpLink::new()
-				.with_user_id(
-					get_zitadel_encoded_id(imported_user.get_external_id_bytes()?)
-						.context("Failed to set IDP user ID")?,
-				)
+				.with_user_id(get_zitadel_encoded_id(imported_user.get_external_id_bytes()?))
 				.with_idp_id(self.zitadel_config.idp_id.clone())
 				.with_user_name(imported_user.email.clone())]);
 		}
@@ -236,13 +267,15 @@ impl Zitadel {
 
 		if old_user.first_name != updated_user.first_name
 			|| old_user.last_name != updated_user.last_name
+			|| old_user.external_user_id != updated_user.external_user_id
 		{
 			request.set_profile(
 				SetHumanProfile::new(
 					updated_user.first_name.clone(),
 					updated_user.last_name.clone(),
 				)
-				.with_display_name(updated_user.get_display_name()),
+				.with_display_name(updated_user.get_display_name())
+				.with_nick_name(updated_user.external_user_id.clone()),
 			);
 		}
 
@@ -295,7 +328,7 @@ impl Zitadel {
 }
 
 /// Convert a Zitadel search result to a user
-fn search_result_to_user(user: ZitadelUser) -> Result<User> {
+pub fn search_result_to_user(user: ZitadelUser) -> Result<User> {
 	let human_user = user.human().ok_or(anyhow!("Machine user found in human user search"))?;
 	let nick_name = human_user
 		.profile()
@@ -319,16 +352,14 @@ fn search_result_to_user(user: ZitadelUser) -> Result<User> {
 /// create collisions (although this is unlikely).
 ///
 /// Only use this for Zitadel support.
-pub fn get_zitadel_encoded_id(external_id_bytes: Vec<u8>) -> Result<String> {
-	Ok(if let Ok(encoded_id) = String::from_utf8(external_id_bytes.clone()) {
-		encoded_id
-	} else {
-		BASE64_STANDARD.encode(external_id_bytes)
-	})
+#[allow(clippy::must_use_candidate)]
+pub fn get_zitadel_encoded_id(external_id_bytes: Vec<u8>) -> String {
+	String::from_utf8(external_id_bytes.clone())
+		.unwrap_or_else(|_| BASE64_STANDARD.encode(external_id_bytes))
 }
 
 /// Configuration related to Famedly Zitadel
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ZitadelConfig {
 	/// The URL for Famedly Zitadel authentication
 	pub url: Url,

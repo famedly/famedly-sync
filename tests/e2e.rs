@@ -4,12 +4,14 @@
 /// E2E integration tests
 use std::{collections::HashSet, path::Path, time::Duration};
 
+use base64::{engine::general_purpose, Engine as _};
 use famedly_sync::{
 	csv_test_helpers::temp_csv_file,
-	perform_sync,
+	get_next_zitadel_user, perform_sync,
 	ukt_test_helpers::{
 		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
 	},
+	zitadel::Zitadel as SyncZitadel,
 	AttributeMapping, Config, FeatureFlag,
 };
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
@@ -1395,6 +1397,213 @@ async fn test_e2e_sso_linking() {
 	);
 }
 
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_base64_id() {
+	let config = ldap_config().await;
+	cleanup_test_users(config).await;
+
+	// The uid for this test must be such that encodes to such base64 string that
+	// doesn't look like hex. Otherwise, we need to have a sample of users so the
+	// script determines encoding heuristically. This is tested later in
+	// test_e2e_migrate_ambiguous_id
+	let uid = "base64_test";
+	let email = "migrate_test@famedly.de";
+	let user_name = "migrate_user";
+
+	// Base64-encoded External ID
+	let base64_id = general_purpose::STANDARD.encode(uid);
+
+	run_migration_test(config, email, user_name, base64_id.clone(), hex::encode(uid.as_bytes()))
+		.await;
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_plain_id() {
+	let config = ldap_config().await;
+	cleanup_test_users(config).await;
+
+	let uid = "plain_test";
+	let email = "plain_test@famedly.de";
+	let user_name = "plain_user";
+
+	// Plain unencoded External ID
+	let plain_id = uid.to_owned();
+
+	run_migration_test(config, email, user_name, plain_id.clone(), hex::encode(uid.as_bytes()))
+		.await;
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_hex_id() {
+	let config = ldap_config().await;
+	cleanup_test_users(config).await;
+
+	let uid = "hex_test";
+	let email = "hex_test@famedly.de";
+	let user_name = "hex_user";
+
+	// Already hex-encoded External ID
+	let hex_id = hex::encode(uid.as_bytes());
+
+	run_migration_test(config, email, user_name, hex_id.clone(), hex_id.clone()).await;
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_empty_id() {
+	let config = ldap_config().await;
+
+	let email = "empty_id@famedly.de";
+	let user_name = "empty_user";
+
+	// Empty External ID
+	let empty_id = "".to_owned();
+
+	run_migration_test(config, email, user_name, empty_id.clone(), empty_id.clone()).await;
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_ambiguous_id_as_base64() {
+	let config = ldap_config().await;
+	cleanup_test_users(config).await;
+
+	let email = "ambiguous_id@famedly.de";
+	let user_name = "ambiguous_user_one";
+
+	// "cafe" is hex (ca fe) and also appears as valid base64
+	// (all alphanumeric and length % 4 == 0)
+	let ambiguous_id = "cafe".to_owned();
+
+	// The migration logic should decide to treat it as hex when looking at it on
+	// its own, because we check for hex first (it's a subset of base64 and thus
+	// more restrictive)
+	let expected_id = ambiguous_id.clone();
+	run_migration_test(config, email, user_name, ambiguous_id, expected_id).await;
+
+	// When we create some base64-only encoded values in the database, the migration
+	// logic should heuristically find out, that the DB has external IDs encoded
+	// with base64 and thus treat the ambiguous ID as base64 even though it can be
+	// both base64 and hex
+	let base_64_user = ImportHumanUserRequest {
+		user_name: "another_test".to_owned(),
+		profile: Some(Profile {
+			first_name: "Test".to_owned(),
+			last_name: "User".to_owned(),
+			display_name: "User, Test".to_owned(),
+			gender: Gender::Unspecified.into(),
+			nick_name: "Z9FmZQ==".to_owned(), // base64 encoded
+			preferred_language: String::default(),
+		}),
+		email: Some(Email {
+			email: "another_test@example.com".to_owned(),
+			is_email_verified: true,
+		}),
+		phone: Some(Phone { phone: "+12345678901".to_owned(), is_phone_verified: true }),
+		password: String::default(),
+		hashed_password: None,
+		password_change_required: false,
+		request_passwordless_registration: false,
+		otp_code: String::default(),
+		idps: vec![],
+	};
+
+	let zitadel = open_zitadel_connection().await;
+	let temp_user = zitadel
+		.create_human_user(&config.zitadel.organization_id, base_64_user)
+		.await
+		.expect("Failed to create user");
+
+	let user_name = "ambiguous_user_two";
+
+	// "beefcafe" appears both as a valid hex and base64
+	let ambiguous_id = "beefcafe".to_owned();
+
+	let decoded =
+		general_purpose::STANDARD.decode(&ambiguous_id).expect("Test ID should be valid base64");
+	let expected_id = hex::encode(decoded);
+
+	run_migration_test(config, email, user_name, ambiguous_id, expected_id).await;
+
+	zitadel.remove_user(temp_user).await.expect("Failed to delete user");
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_then_ldap_sync() {
+	let config = ldap_config().await;
+	cleanup_test_users(config).await;
+
+	let uid = "migrate_sync_test_ldap";
+	let email = "migrate_sync_ldap@famedly.de";
+	let user_name = "migrate_sync_user_ldap";
+
+	// Base64-encoded ID
+	let base64_id = general_purpose::STANDARD.encode(uid);
+
+	run_migration_test(config, email, user_name, base64_id.clone(), hex::encode(uid.as_bytes()))
+		.await;
+
+	// LDAP with updated First Name
+	let config = ldap_config().await;
+	let mut ldap = Ldap::new().await;
+	ldap.create_user(
+		"New First Name",
+		"User",
+		"User, Test", // !NOTE: Display name from LDAP isn't picked up by the sync
+		email,
+		Some("+12345678901"),
+		uid,
+		false,
+	)
+	.await;
+
+	perform_sync(config).await.expect("LDAP sync failed");
+
+	// Verify both External ID encoding and updated First Name
+	let zitadel = open_zitadel_connection().await;
+	let user = zitadel
+		.get_user_by_login_name(user_name)
+		.await
+		.expect("Failed to get user after LDAP sync")
+		.expect("User not found after LDAP sync");
+
+	match user.r#type {
+		Some(UserType::Human(human)) => {
+			let profile = human.profile.expect("User lacks profile after LDAP sync");
+			let expected_hex_id = hex::encode(uid.as_bytes());
+			assert_eq!(
+				profile.nick_name, expected_hex_id,
+				"External ID not in hex encoding after LDAP sync for user '{}'",
+				email
+			);
+			assert_eq!(
+				profile.first_name, "New First Name",
+				"Fist name was not updated by LDAP sync for user '{}'",
+				email
+			);
+		}
+		_ => panic!("User lacks human details after LDAP sync for user '{}'", email),
+	}
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_migrate_dry_run() {
+	let mut dry_run_config = ldap_config().await.clone();
+	dry_run_config.feature_flags.push(FeatureFlag::DryRun);
+
+	let uid = "plain_test_dry_run";
+	let email = "plain_test_dry_run@famedly.de";
+	let user_name = "plain_user_dry_run";
+	let plain_id = uid.to_owned();
+
+	run_migration_test(&dry_run_config, email, user_name, plain_id.clone(), plain_id).await;
+}
+
 struct Ldap {
 	client: LdapClient,
 }
@@ -1527,6 +1736,122 @@ async fn open_zitadel_connection() -> Zitadel {
 	Zitadel::new(zitadel_config.url, zitadel_config.key_file)
 		.await
 		.expect("failed to set up Zitadel client")
+}
+
+/// Helper function to create a user, run migration, and verify the encoding.
+async fn run_migration_test(
+	config: &Config,
+	email: &str,
+	user_name: &str,
+	initial_nick_name: String,
+	expected_nick_name: String,
+) {
+	// Prepare Zitadel client
+	let zitadel = open_zitadel_connection().await;
+
+	// Create user in Zitadel
+	let user = ImportHumanUserRequest {
+		user_name: user_name.to_owned(),
+		profile: Some(Profile {
+			first_name: "Test".to_owned(),
+			last_name: "User".to_owned(),
+			display_name: "User, Test".to_owned(),
+			gender: Gender::Unspecified.into(),
+			nick_name: initial_nick_name.clone(),
+			preferred_language: String::default(),
+		}),
+		email: Some(Email { email: email.to_owned(), is_email_verified: true }),
+		phone: Some(Phone { phone: "+12345678901".to_owned(), is_phone_verified: true }),
+		password: String::default(),
+		hashed_password: None,
+		password_change_required: false,
+		request_passwordless_registration: false,
+		otp_code: String::default(),
+		idps: vec![],
+	};
+
+	zitadel
+		.create_human_user(&config.zitadel.organization_id, user)
+		.await
+		.expect("Failed to create user");
+
+	// Run migration
+	run_migration_binary(config.feature_flags.contains(&FeatureFlag::DryRun));
+
+	// Verify External ID after migration
+	let user = zitadel
+		.get_user_by_login_name(user_name)
+		.await
+		.expect("Failed to get user")
+		.expect("User not found");
+
+	match user.r#type {
+		Some(user_type) => {
+			if let UserType::Human(human) = user_type {
+				let profile = human.profile.expect("User lacks profile");
+				assert_eq!(
+					profile.nick_name, expected_nick_name,
+					"Nickname encoding mismatch for user '{}'",
+					email
+				);
+			} else {
+				panic!("User is not of type Human for user '{}'", email);
+			}
+		}
+		None => panic!("User type is None for user '{}'", email),
+	}
+}
+
+/// Helper function to run the migration binary.
+fn run_migration_binary(is_dry_run: bool) {
+	let temp_dir = tempfile::tempdir().unwrap();
+
+	// Copy service-user.json to temp location
+	let mut key_file_path = temp_dir.path().to_path_buf();
+	key_file_path.push("zitadel");
+	std::fs::create_dir_all(&key_file_path).unwrap();
+	key_file_path.push("service-user.json");
+
+	std::fs::copy("tests/environment/zitadel/service-user.json", &key_file_path).unwrap();
+
+	// Read and modify config
+	let mut config_path = std::env::current_dir().unwrap();
+	config_path.push("tests/environment/config.yaml");
+	let mut config_content = std::fs::read_to_string(&config_path).unwrap();
+
+	// Update key_file path to be relative to temp config
+	config_content = config_content.replace(
+		"key_file: tests/environment/zitadel/service-user.json",
+		&format!("key_file: {}", key_file_path.to_str().unwrap()),
+	);
+
+	// Add dry run flag if needed
+	if is_dry_run {
+		config_content = config_content.replace("feature_flags:", "feature_flags:\n  - dry_run");
+	}
+
+	// Write config to temp dir
+	let config_file = temp_dir.path().join("config.yaml");
+	std::fs::write(&config_file, &config_content).unwrap();
+
+	// Run migration with temp config
+	std::env::set_var("FAMEDLY_SYNC_CONFIG", config_file.to_str().unwrap());
+
+	let status = std::process::Command::new(env!("CARGO_BIN_EXE_migrate"))
+		.status()
+		.expect("Failed to execute migration binary");
+	assert!(status.success(), "Migration binary exited with status: {}", status);
+}
+
+async fn cleanup_test_users(config: &Config) {
+	let mut zitadel = SyncZitadel::new(config).await.expect("failed to set up Zitadel client");
+	let mut stream = zitadel.list_users().expect("failed to list users");
+
+	while let Some(zitadel_user) =
+		get_next_zitadel_user(&mut stream, &mut zitadel).await.expect("failed to get next user")
+	{
+		zitadel.delete_user(&zitadel_user.1).await.expect("failed to delete user");
+	}
 }
 
 /// Get the module's test environment config

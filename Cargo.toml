@@ -5,6 +5,10 @@ authors = []
 edition = "2021"
 publish = false
 
+[[bin]]
+name = "migrate"
+path = "src/bin/migrate.rs"
+
 [dependencies]
 anyhow = { version = "1.0.81", features = ["backtrace"] }
 async-trait = "0.1.82"
