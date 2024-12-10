@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2024-12-10
+
+### Features
+
+- [**breaking**] Stop relying on a local cache to track changes
+- [**breaking**] Use external ID encoding supporting lexicographical order
+- Add migration script
+
+### Bug Fixes
+
+- Pre-empt accidentally leaking PII in logs
+- [**breaking**] Rework handling of binary fields from LDAP
+
+### Refactor
+
+- Move uuid method to user struct impl
+
+### Documentation
+
+- Split apart sample configurations
+- Update README
+
+### Testing
+
+- Split apart multi-source oriented test setup
+- Update Zitadel version for test env
+- Support single-source sync
+- SSO Linking
+
+### Miscellaneous Tasks
+
+- Remove bincode dependency
+- Deal with new clippy lint
+- Add more error context
+
+### Bump
+
+- Update rust-cache action
+
 ## [0.6.0] - 2024-11-05
 
 ### Features
