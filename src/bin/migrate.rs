@@ -90,16 +90,22 @@ fn detect_database_encoding(users: Vec<SyncUser>) -> ExternalIdEncoding {
 		}
 	}
 
+	// Return early if no valid samples
+	if total == 0 {
+		return ExternalIdEncoding::Ambiguous;
+	}
+
 	// Use thresholds to determine encoding
 	let hex_ratio = f64::from(hex_count) / f64::from(total);
 	let base64_ratio = f64::from(base64_count) / f64::from(total);
 
-	if hex_ratio > 0.8 {
-		ExternalIdEncoding::Hex
-	} else if base64_ratio > 0.8 {
-		ExternalIdEncoding::Base64
-	} else {
-		ExternalIdEncoding::Plain
+	// Require a strong majority (90%) for a format to be considered dominant
+	// Also detect when both formats have significant presence
+	match (hex_ratio, base64_ratio) {
+		(h, _) if h > 0.9 => ExternalIdEncoding::Hex,
+		(_, b) if b > 0.9 => ExternalIdEncoding::Base64,
+		(h, b) if h > 0.2 && b > 0.2 => ExternalIdEncoding::Ambiguous, // Both formats present
+		_ => ExternalIdEncoding::Ambiguous,                            // No clear dominant format
 	}
 }
 
@@ -185,7 +191,7 @@ mod tests {
 		// "cafe" might count for both hex and base64, but "cafeb" and "abc" won't count
 		// for either. Out of 3, maybe 1 counts as hex/base64 and 2 are plain. Ratios:
 		// hex = 1/3 ≈ 0.33, base64 = 1/3 ≈ 0.33, both < 0.8.
-		run_detection_test(user_ids, ExternalIdEncoding::Plain);
+		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
 
 	#[tokio::test]
@@ -193,29 +199,65 @@ mod tests {
 		// "zzz" is not hex. It's also not base64-safe (though 'z' is alphanumeric,
 		// length=3 %4!=0) "+++" is not hex and length=3 not multiple of 4 for base64.
 		let user_ids = vec!["zzz", "+++"];
-		run_detection_test(user_ids, ExternalIdEncoding::Plain);
+		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
+	}
+
+	#[tokio::test]
+	async fn test_both_formats_significant() {
+		// 10 total users:
+		// - 3 hex (30%)
+		// - 4 base64 (40%)
+		// - 3 plain (30%)
+		let user_ids = vec![
+			// Hex format users (30%)
+			"deadbeef", "cafebabe", "12345678",
+			// Base64 format users (40%)
+			"Y2FmZQ==", // "cafe"
+			"Zm9vYmFy", // "foobar"
+			"aGVsbG8=", // "hello"
+			"d29ybGQ=", // "world"
+			// Plain format users (30%)
+			"plain_1", "plain_2", "plain_3",
+		];
+
+		// Both hex (30%) and base64 (40%) > 20% threshold
+		// Neither > 90% threshold
+		// Should detect as Ambiguous
+		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
 
 	#[tokio::test]
 	async fn test_near_threshold_hex() {
-		// We want a scenario where hex ratio just hits 0.8.
-		// Suppose we have 5 users total, 4 of which are hex. 4/5 = 0.8
-		// If 4 pass as hex, and maybe 1 is something else.
-		let user_ids = vec!["deadbeef", "cafebabe", "beefcafe", "0123456789abcdef", "plain_id"];
-		// The 4 hex IDs will count, "plain_id" won't count for either.
-		// hex_ratio = 4/5=0.8. The code uses `>` 0.8 not `>=`, so 0.8 is NOT greater
-		// than 0.8. This test checks that boundary condition. Expected = Plain since
-		// not strictly greater.
-		run_detection_test(user_ids, ExternalIdEncoding::Plain);
+		// Testing near 90% threshold for hex
+		// 9 hex users and 1 plain = 90% exactly
+		let user_ids = vec![
+			"deadbeef", "cafebabe", "beefcafe", "12345678", "87654321", "abcdef12", "34567890",
+			"98765432", "fedcba98", "plain_id",
+		];
+		// hex_ratio = 9/10 = 0.9
+		// Code requires > 0.9, not >=, so this should be Ambiguous
+		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
 
 	#[tokio::test]
 	async fn test_near_threshold_base64() {
-		// Similar scenario for base64
-		// 5 users, 4 are valid base64. 4/5=0.8 exactly.
-		let user_ids = vec!["Y2FmZQ==", "Zm9v", "YmFy", "YQ==", "plain_id"];
-		// Again hits exactly 0.8, not greater, expect Plain
-		run_detection_test(user_ids, ExternalIdEncoding::Plain);
+		// Testing near 90% threshold for base64
+		// 9 base64 users and 1 plain = 90% exactly
+		let user_ids = vec![
+			"Y2FmZQ==", // cafe
+			"Zm9vYmFy", // foobar
+			"aGVsbG8=", // hello
+			"d29ybGQ=", // world
+			"dGVzdA==", // test
+			"YWJjZA==", // abcd
+			"eHl6Nzg=", // xyz78
+			"cXdlcnQ=", // qwert
+			"MTIzNDU=", // 12345
+			"plain_id",
+		];
+		// base64_ratio = 9/10 = 0.9
+		// Code requires > 0.9, not >=, so this should be Ambiguous
+		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
 
 	#[tokio::test]

@@ -16,6 +16,8 @@ pub enum ExternalIdEncoding {
 	Base64,
 	/// The external ID is stored as a plain string
 	Plain,
+	/// The encoding could not be determined
+	Ambiguous,
 }
 
 /// Source-agnostic representation of a user
@@ -118,7 +120,7 @@ impl User {
 		expected_encoding: ExternalIdEncoding,
 	) -> Result<User> {
 		// Double check the encoding
-		match &self.external_user_id {
+		let detected_encoding = match &self.external_user_id {
 			s if s.is_empty() => {
 				tracing::warn!(?self, "Skipping user due to empty uid");
 				return Ok(self.clone());
@@ -133,6 +135,7 @@ impl User {
 					  "Encoding mismatch detected"
 					);
 				}
+				ExternalIdEncoding::Hex
 			}
 			s if s
 				.chars()
@@ -148,6 +151,7 @@ impl User {
 					  "Encoding mismatch detected"
 					);
 				}
+				ExternalIdEncoding::Base64
 			}
 			_ => {
 				// Plain or unknown encoding
@@ -159,20 +163,38 @@ impl User {
 						"Encoding mismatch detected"
 					);
 				}
+				ExternalIdEncoding::Plain
 			}
 		};
 
 		let new_external_id = match expected_encoding {
 			ExternalIdEncoding::Hex => self.external_user_id.clone(),
-			ExternalIdEncoding::Base64 => {
-				if let Ok(decoded) = general_purpose::STANDARD.decode(&self.external_user_id) {
-					hex::encode(decoded)
-				} else {
-					tracing::warn!(?self, "Failed to decode base64 ID despite database heuristic");
-					hex::encode(self.external_user_id.as_bytes())
+			ExternalIdEncoding::Base64 => decode_base64_or_fallback(
+				&self.external_user_id,
+				"Failed to decode base64 ID despite database heuristic",
+			),
+			ExternalIdEncoding::Plain => hex::encode(self.external_user_id.as_bytes()),
+			ExternalIdEncoding::Ambiguous => {
+				tracing::warn!(
+					?self,
+					"Using case-by-case detected encoding due to ambiguous expected encoding"
+				);
+				match detected_encoding {
+					ExternalIdEncoding::Hex => self.external_user_id.clone(),
+					ExternalIdEncoding::Base64 => decode_base64_or_fallback(
+						&self.external_user_id,
+						"Failed to decode base64 ID despite case-by-case handling",
+					),
+					ExternalIdEncoding::Plain => hex::encode(self.external_user_id.as_bytes()),
+					ExternalIdEncoding::Ambiguous => {
+						tracing::error!(
+                      ?self,
+                      "Unreachable code? Ambiguous encoding detected despite case-by-case handling."
+                  );
+						unreachable!("Ambiguous encoding should not be detected here");
+					}
 				}
 			}
-			ExternalIdEncoding::Plain => hex::encode(self.external_user_id.as_bytes()),
 		};
 
 		Ok(Self { external_user_id: new_external_id, ..self.clone() })
@@ -202,5 +224,16 @@ impl std::fmt::Debug for User {
 			.field("external_user_id", &self.external_user_id)
 			.field("enabled", &self.enabled)
 			.finish()
+	}
+}
+
+/// Helper function for base64 decoding with fallback
+fn decode_base64_or_fallback(id: &str, warning_message: &str) -> String {
+	match general_purpose::STANDARD.decode(id) {
+		Ok(decoded) => hex::encode(decoded),
+		Err(_) => {
+			tracing::warn!(?id, "{}", warning_message);
+			hex::encode(id.as_bytes())
+		}
 	}
 }

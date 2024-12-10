@@ -29,7 +29,7 @@ use crate::{
 const FAMEDLY_USER_ROLE: &str = "User";
 
 /// The number of users to sample for encoding detection
-const USER_SAMPLE_SIZE: usize = 10;
+const USER_SAMPLE_SIZE: usize = 50;
 
 /// A very high-level Zitadel zitadel_client
 #[derive(Clone, Debug)]
