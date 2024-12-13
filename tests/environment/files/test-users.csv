@@ -1,5 +1,5 @@
-email,first_name,last_name,phone
-john.doe@example.com,John,Doe,"+1111111111"
-jane.smith@example.com,Jane,Smith,"+2222222222"
-alice.johnson@example.com,Alice,Johnson,
-bob.williams@example.com,Bob,Williams,"+4444444444"
+email,first_name,last_name,phone,localpart
+john.doe@example.com,John,Doe,"+1111111111",john.doe
+jane.smith@example.com,Jane,Smith,"+2222222222",
+alice.johnson@example.com,Alice,Johnson,,alice.johnson
+bob.williams@example.com,Bob,Williams,"+4444444444",

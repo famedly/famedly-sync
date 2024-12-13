@@ -161,14 +161,17 @@ impl Zitadel {
 			return Ok(());
 		}
 
-		let localpart = if self.feature_flags.contains(&FeatureFlag::PlainLocalpart) {
+		// Use the localpart from the user if available, otherwise generate one
+		let localpart = if let Some(localpart) = &imported_user.localpart {
+			localpart.clone()
+		} else if self.feature_flags.contains(&FeatureFlag::PlainLocalpart) {
 			String::from_utf8(imported_user.get_external_id_bytes()?)
 				.context(format!("Unsupported binary external ID for user: {:?}", imported_user))?
 		} else {
 			imported_user.get_famedly_uuid()?
 		};
 
-		let mut metadata = vec![SetMetadataEntry::new("localpart".to_owned(), localpart)];
+		let mut metadata = vec![SetMetadataEntry::new("localpart".to_owned(), localpart.clone())];
 
 		if let Some(preferred_username) = imported_user.preferred_username.clone() {
 			metadata
@@ -185,7 +188,8 @@ impl Zitadel {
 		.with_organization(
 			Organization::new().with_org_id(self.zitadel_config.organization_id.clone()),
 		)
-		.with_metadata(metadata);
+		.with_metadata(metadata)
+		.with_user_id(localpart); // Set the Zitadel userId to the localpart
 
 		if let Some(phone) = imported_user.phone.clone() {
 			user.set_phone(
@@ -249,6 +253,16 @@ impl Zitadel {
 			old_user.external_user_id,
 			updated_user.external_user_id
 		);
+
+		// Check if localpart has changed and emit warning if it has
+		if old_user.localpart != updated_user.localpart {
+			tracing::warn!(
+				"Cannot update Zitadel userId (localpart) for user {:?} having old localpart: {:?}, and new localpart: {:?}",
+				old_user,
+				old_user.localpart,
+				updated_user.localpart
+			);
+		}
 
 		if self.feature_flags.is_enabled(FeatureFlag::DryRun) {
 			tracing::warn!("Skipping update due to dry run");
@@ -336,7 +350,7 @@ pub fn search_result_to_user(user: ZitadelUser) -> Result<User> {
 		.ok_or(anyhow!("Missing external ID found for user"))?;
 
 	// TODO: If async closures become a reality, we
-	// should capture the correct preferred_username
+	// should capture the correct preferred_username and localpart from metadata
 	// here.
 	let user = User::try_from_zitadel_user(human_user.clone(), nick_name.clone())?;
 	Ok(user)

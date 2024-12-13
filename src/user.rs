@@ -37,11 +37,13 @@ pub struct User {
 	pub(crate) preferred_username: Option<String>,
 	/// The user's external (non-Zitadel) ID
 	pub(crate) external_user_id: String,
+	/// The user's localpart (used as Zitadel userId)
+	pub(crate) localpart: Option<String>,
 }
 
 impl User {
 	/// Create a new user instance, used in tests
-	#[allow(clippy::must_use_candidate)]
+	#[allow(clippy::must_use_candidate, clippy::too_many_arguments)]
 	pub fn new(
 		first_name: String,
 		last_name: String,
@@ -50,8 +52,18 @@ impl User {
 		enabled: bool,
 		preferred_username: Option<String>,
 		external_user_id: String,
+		localpart: Option<String>,
 	) -> Self {
-		Self { first_name, last_name, email, phone, enabled, preferred_username, external_user_id }
+		Self {
+			first_name,
+			last_name,
+			email,
+			phone,
+			enabled,
+			preferred_username,
+			external_user_id,
+			localpart,
+		}
 	}
 
 	/// Convert a Zitadel user to our internal representation
@@ -84,6 +96,7 @@ impl User {
 			preferred_username: None,
 			external_user_id: external_id,
 			enabled: true,
+			localpart: None,
 		})
 	}
 
@@ -91,6 +104,12 @@ impl User {
 	#[must_use]
 	pub fn get_display_name(&self) -> String {
 		format!("{}, {}", self.last_name, self.first_name)
+	}
+
+	/// Get the localpart
+	#[must_use]
+	pub fn get_localpart(&self) -> Option<&str> {
+		self.localpart.as_deref()
 	}
 
 	/// Get the external user ID
@@ -210,6 +229,7 @@ impl PartialEq for User {
 			&& self.enabled == other.enabled
 			&& self.preferred_username == other.preferred_username
 			&& self.external_user_id == other.external_user_id
+			&& self.localpart == other.localpart
 	}
 }
 
@@ -222,6 +242,7 @@ impl std::fmt::Debug for User {
 			.field("phone", &"***")
 			.field("preferred_username", &"***")
 			.field("external_user_id", &self.external_user_id)
+			.field("localpart", &self.localpart)
 			.field("enabled", &self.enabled)
 			.finish()
 	}

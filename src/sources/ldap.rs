@@ -128,6 +128,7 @@ impl LdapSource {
 			external_user_id: ldap_user_id,
 			phone,
 			enabled,
+			localpart: None,
 		})
 	}
 }

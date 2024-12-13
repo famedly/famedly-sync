@@ -68,6 +68,9 @@ struct CsvData {
 	last_name: String,
 	/// The user's phone number
 	phone: String,
+	/// The user's localpart (optional)
+	#[serde(default)]
+	localpart: String,
 }
 
 impl CsvData {
@@ -81,6 +84,7 @@ impl CsvData {
 			preferred_username: Some(csv_data.email.clone()),
 			external_user_id: hex::encode(csv_data.email),
 			enabled: true,
+			localpart: (!csv_data.localpart.is_empty()).then_some(csv_data.localpart),
 		}
 	}
 }
@@ -139,11 +143,11 @@ mod tests {
 	fn test_get_users() {
 		let mut config = load_config();
 		let csv_content = indoc! {r#"
-          email,first_name,last_name,phone
-          john.doe@example.com,John,Doe,+1111111111
-          jane.smith@example.com,Jane,Smith,+2222222222
-          alice.johnson@example.com,Alice,Johnson,
-          bob.williams@example.com,Bob,Williams,+4444444444
+          email,first_name,last_name,phone,localpart
+          john.doe@example.com,John,Doe,+1111111111,john.doe
+          jane.smith@example.com,Jane,Smith,+2222222222,
+          alice.johnson@example.com,Alice,Johnson,,alice.johnson
+          bob.williams@example.com,Bob,Williams,+4444444444,
         "#};
 		let _file = test_helpers::temp_csv_file(&mut config, csv_content);
 
@@ -155,10 +159,52 @@ mod tests {
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 4, "Unexpected number of users");
+
+		// Test user with localpart
 		assert_eq!(users[0].first_name, "John", "Unexpected first name at index 0");
 		assert_eq!(users[0].email, "john.doe@example.com", "Unexpected email at index 0");
-		assert_eq!(users[3].last_name, "Williams", "Unexpected last name at index 3");
+		assert_eq!(
+			users[0].external_user_id,
+			hex::encode("john.doe@example.com".as_bytes()),
+			"Unexpected external_user_id at index 0"
+		);
+		assert_eq!(
+			users[0].localpart,
+			Some("john.doe".to_owned()),
+			"Unexpected localpart at index 0"
+		);
+
+		// Test user without localpart (empty string)
+		assert_eq!(users[1].email, "jane.smith@example.com", "Unexpected email at index 1");
+		assert_eq!(
+			users[1].external_user_id,
+			hex::encode("jane.smith@example.com".as_bytes()),
+			"Unexpected external_user_id at index 1"
+		);
+		assert_eq!(users[1].localpart, None, "Unexpected localpart at index 1");
+
+		// Test user with localpart but no phone
+		assert_eq!(users[2].email, "alice.johnson@example.com", "Unexpected email at index 2");
+		assert_eq!(
+			users[2].external_user_id,
+			hex::encode("alice.johnson@example.com".as_bytes()),
+			"Unexpected external_user_id at index 2"
+		);
+		assert_eq!(
+			users[2].localpart,
+			Some("alice.johnson".to_owned()),
+			"Unexpected localpart at index 2"
+		);
 		assert_eq!(users[2].phone, None, "Unexpected phone at index 2");
+
+		// Test user without localpart (empty string) but with phone
+		assert_eq!(users[3].email, "bob.williams@example.com", "Unexpected email at index 3");
+		assert_eq!(
+			users[3].external_user_id,
+			hex::encode("bob.williams@example.com".as_bytes()),
+			"Unexpected external_user_id at index 3"
+		);
+		assert_eq!(users[3].localpart, None, "Unexpected localpart at index 3");
 		assert_eq!(users[3].phone, Some("+4444444444".to_owned()), "Unexpected phone at index 3");
 	}
 
@@ -166,7 +212,7 @@ mod tests {
 	fn test_get_users_empty_file() {
 		let mut config = load_config();
 		let csv_content = indoc! {r#"
-          email,first_name,last_name,phone
+          email,first_name,last_name,phone,localpart
         "#};
 		let _file = test_helpers::temp_csv_file(&mut config, csv_content);
 
@@ -204,7 +250,7 @@ mod tests {
 		let mut config = load_config();
 		let csv_content = indoc! {r#"
           first_name
-          john.doe@example.com,John,Doe,+1111111111
+          john.doe@example.com,John,Doe,+1111111111,john.doe
         "#};
 		let _file = test_helpers::temp_csv_file(&mut config, csv_content);
 
@@ -220,9 +266,9 @@ mod tests {
 	fn test_get_users_invalid_content() {
 		let mut config = load_config();
 		let csv_content = indoc! {r#"
-          email,first_name,last_name,phone
+          email,first_name,last_name,phone,localpart
           john.doe@example.com
-          jane.smith@example.com,Jane,Smith,+2222222222
+          jane.smith@example.com,Jane,Smith,+2222222222,jane.smith
         "#};
 		let _file = test_helpers::temp_csv_file(&mut config, csv_content);
 
@@ -236,5 +282,41 @@ mod tests {
 		assert_eq!(users.len(), 1, "Unexpected number of users");
 		assert_eq!(users[0].email, "jane.smith@example.com", "Unexpected email at index 0");
 		assert_eq!(users[0].last_name, "Smith", "Unexpected last name at index 0");
+		assert_eq!(
+			users[0].external_user_id,
+			hex::encode("jane.smith@example.com".as_bytes()),
+			"Unexpected external_user_id at index 0"
+		);
+		assert_eq!(
+			users[0].localpart,
+			Some("jane.smith".to_owned()),
+			"Unexpected localpart at index 0"
+		);
+	}
+
+	#[test]
+	fn test_backward_compatibility() {
+		// Test that old CSV format without localpart column still works
+		let mut config = load_config();
+		let csv_content = indoc! {r#"
+          email,first_name,last_name,phone
+          john.doe@example.com,John,Doe,+1111111111
+          jane.smith@example.com,Jane,Smith,+2222222222
+        "#};
+		let _file = test_helpers::temp_csv_file(&mut config, csv_content);
+
+		let csv_config = config.sources.csv.expect("CsvSource configuration is missing");
+		let csv = CsvSource::new(csv_config);
+
+		let result = csv.read_csv();
+		assert!(result.is_ok(), "Failed to get users: {:?}", result);
+
+		let users = result.expect("Failed to get users");
+		assert_eq!(users.len(), 2, "Unexpected number of users");
+		// All users should have None localpart
+		assert!(
+			users.iter().all(|u| u.localpart.is_none()),
+			"Expected all users to have None localpart"
+		);
 	}
 }

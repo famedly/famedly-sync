@@ -123,6 +123,7 @@ mod tests {
 			true,
 			None,
 			external_user_id.to_owned(),
+			None,
 		)
 	}
 
@@ -295,5 +296,29 @@ mod tests {
 		// 'p' = 0x70, 'l' = 0x6c, 'a' = 0x61, 'i' = 0x69, 'n' = 0x6e, '_'=0x5f,
 		// 'i'=0x69, 'd'=0x64 => "706c61696e5f6964"
 		run_conversion_test(original_id, ExternalIdEncoding::Plain, "706c61696e5f6964");
+	}
+
+	#[tokio::test]
+	async fn test_localpart_preservation() {
+		// Test that migration preserves localpart values
+		let original_user = SyncUser::new(
+			"first name".to_owned(),
+			"last name".to_owned(),
+			"email@example.com".to_owned(),
+			None,
+			true,
+			None,
+			"Y2FmZQ==".to_owned(),             // base64 encoded external ID
+			Some("test.localpart".to_owned()), // localpart should be preserved
+		);
+
+		let migrated_user = original_user
+			.create_user_with_converted_external_id(ExternalIdEncoding::Base64)
+			.expect("Should successfully convert user");
+
+		// External ID should be converted from base64 to hex
+		assert_eq!(migrated_user.get_external_id(), hex::encode("cafe"));
+		// Localpart should remain unchanged
+		assert_eq!(migrated_user.get_localpart(), Some("test.localpart"));
 	}
 }

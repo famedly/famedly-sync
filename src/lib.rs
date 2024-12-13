@@ -34,7 +34,15 @@ pub async fn get_next_zitadel_user(
 				.ok()
 				.and_then(|metadata| metadata.metadata().value());
 
+			let localpart = zitadel
+				.zitadel_client
+				.get_user_metadata(&zitadel_user.1, "localpart")
+				.await
+				.ok()
+				.and_then(|metadata| metadata.metadata().value());
+
 			zitadel_user.0.preferred_username = preferred_username;
+			zitadel_user.0.localpart = localpart;
 
 			Ok(Some(zitadel_user))
 		}
