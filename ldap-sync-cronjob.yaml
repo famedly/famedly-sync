@@ -14,7 +14,7 @@ spec:
               image: docker-oss.nexus.famedly.de/famedly-sync-agent:v0.4.0
               imagePullPolicy: IfNotPresent
               volumeMounts:
-                - mountPath: /opt/famedly-sync-agent/
+                - mountPath: /opt/famedly-sync/
                   name: famedly-sync-config
           restartPolicy: OnFailure
           volumes:

@@ -3,7 +3,7 @@ zitadel:
   # The Famedly user endpoint to sync to.
   url: https://auth.famedly.de
   # The Famedly-provided service user credentials.
-  key_file: /opt/famedly-sync-agent/service-user.json
+  key_file: /opt/famedly-sync/service-user.json
   # The organization whose users to sync.
   organization_id: 278274756195721220
   # The project to grant users access to.

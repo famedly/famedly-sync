@@ -4,5 +4,5 @@ services:
     volumes:
       - type: bind
         source: ./opt
-        target: /opt/famedly-sync-agent
+        target: /opt/famedly-sync
     network_mode: host
