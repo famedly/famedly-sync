@@ -9,6 +9,10 @@ zitadel:
   # The project to grant users access to.
   project_id: 278274945274880004
   # The identity provider ID to enable SSO login for
+  #
+  # WARNING: This user *must* be scoped to the specific org/project,
+  # as famedly-sync does not limit syncs to the configured org/project
+  # by itself.
   idp_id: 281430143275106308
 
 feature_flags:

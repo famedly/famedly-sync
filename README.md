@@ -9,6 +9,12 @@ Currently supported sources:
 
 ## Configuration
 
+> [!WARNING]
+>
+> When creating a service user, limit them to the specific project and
+> organization scope that they are intended to sync. `famedly-sync`
+> currently does not separately limit the scope of the sync, see #103.
+
 The tool expects a configuration file located at `./config.yaml`. See example configuration at [config.sample.yaml](./config.sample.yaml).
 
 The default path can be changed by setting the new path to the environment variable `FAMEDLY_SYNC_CONFIG`.
