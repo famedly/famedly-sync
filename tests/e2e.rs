@@ -542,6 +542,70 @@ async fn test_e2e_ldaps() {
 
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
+async fn test_e2e_ldaps_no_ident() {
+	let mut config = ldap_config().await.clone();
+	config
+		.sources
+		.ldap
+		.as_mut()
+		.map(|ldap_config| {
+			ldap_config.url = Url::parse("ldaps://localhost:1636").expect("invalid ldaps url");
+			if let Some(tls_config) = ldap_config.tls.as_mut() {
+				tls_config.client_certificate = None;
+				tls_config.client_key = None;
+			}
+		})
+		.expect("ldap must be configured for this test");
+
+	let mut ldap = Ldap::new().await;
+	ldap.create_user(
+		"Bob",
+		"Tables",
+		"Bobby",
+		"servertls@famedly.de",
+		Some("+12015550123"),
+		"servertls",
+		false,
+	)
+	.await;
+
+	perform_sync(&config).await.expect("syncing failed");
+
+	let zitadel = open_zitadel_connection().await;
+	let user = zitadel
+		.get_user_by_login_name("servertls@famedly.de")
+		.await
+		.expect("could not query Zitadel users");
+
+	assert!(user.is_some());
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_ldaps_invalid_ident() {
+	let mut config = ldap_config().await.clone();
+	config
+		.sources
+		.ldap
+		.as_mut()
+		.map(|ldap_config| {
+			ldap_config.url = Url::parse("ldaps://localhost:1636").expect("invalid ldaps url");
+			if let Some(tls_config) = ldap_config.tls.as_mut() {
+				tls_config.client_key = None;
+			}
+		})
+		.expect("ldap must be configured for this test");
+
+	let result = perform_sync(&config).await;
+
+	assert!(result.is_err());
+	assert!(result.unwrap_err().source().is_some_and(|source| {
+		source.to_string().contains("Both client key *and* certificate must be specified")
+	}));
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
 async fn test_e2e_ldaps_starttls() {
 	let mut config = ldap_config().await.clone();
 	config

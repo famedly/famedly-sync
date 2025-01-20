@@ -1,16 +1,13 @@
 //! LDAP source for syncing with Famedly's Zitadel.
 
-use std::{fmt::Display, path::PathBuf};
+use std::{fmt::Display, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use ldap_poller::{
-	config::TLSConfig, ldap::EntryStatus, ldap3::SearchEntry, AttributeConfig, CacheMethod,
-	ConnectionConfig, Ldap, SearchEntryExt, Searches,
-};
+use itertools::Itertools;
+use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
+use native_tls::{Certificate, Identity, TlsConnector};
 use serde::Deserialize;
-use tokio::sync::mpsc::Receiver;
-use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use url::Url;
 
 use super::Source;
@@ -29,21 +26,59 @@ impl Source for LdapSource {
 	}
 
 	async fn get_sorted_users(&self) -> Result<Vec<User>> {
-		let (mut ldap_client, ldap_receiver) = Ldap::new(self.ldap_config.clone().into(), None);
+		let (conn, mut ldap) = LdapConnAsync::from_url_with_settings(
+			self.ldap_config.clone().try_into()?,
+			&self.ldap_config.url,
+		)
+		.await?;
 
-		let sync_handle: tokio::task::JoinHandle<Result<_>> = tokio::spawn(async move {
-			ldap_client.sync_once(None).await.context("failed to sync/fetch data from LDAP")?;
-			tracing::info!("Finished syncing LDAP data");
-			Ok(())
-		});
+		let connection_result = ldap3::drive!(conn);
 
-		let mut added = self.get_user_changes(ldap_receiver).await?;
-		sync_handle.await??;
+		ldap.with_timeout(Duration::from_secs(self.ldap_config.timeout))
+			.simple_bind(&self.ldap_config.bind_dn, &self.ldap_config.bind_password)
+			.await?
+			.non_error()?;
 
+		// We *could* use the streaming search instead, as that
+		// *could* let up on memory pressure, however we end up
+		// sorting the list in-memory later anyway.
+		//
+		// TODO: Use streaming search when we have a way to receive
+		// pre-sorted results.
+		let (search_results, _stats) = ldap
+			.search(
+				&self.ldap_config.base_dn,
+				Scope::Subtree,
+				&self.ldap_config.user_filter,
+				self.ldap_config.clone().get_attribute_list(),
+			)
+			.await?
+			.non_error()?;
+
+		let mut users: Vec<User> = search_results
+			.into_iter()
+			.map(SearchEntry::construct)
+			.map(|entry| self.parse_user(entry))
+			.try_collect()?;
+
+		// Check if there were any connection errors before proceeding
+		// with an expensive sort
+		ldap.unbind().await?;
+		connection_result.await.context("Connection to ldap server failed")?;
+
+		// There are LDAP extensions that permit sorting, however they
+		// seem to be largely best-effort, and the server may just
+		// return unsorted results if it doesn't feel like it or the
+		// user is not permitted to sort (yeah...).
+		//
+		// Since having sorted lists is *really* important to the sync
+		// algorithm, we shouldn't try to rely on this without a good
+		// amount of testing.
+		//
 		// TODO: Find out if we can use the AD extension for receiving sorted data
-		added.sort_by(|a, b| a.external_user_id.cmp(&b.external_user_id));
+		users.sort_by(|a, b| a.external_user_id.cmp(&b.external_user_id));
 
-		Ok(added)
+		Ok(users)
 	}
 }
 
@@ -51,23 +86,6 @@ impl LdapSource {
 	/// Create a new LDAP source
 	pub fn new(ldap_config: LdapSourceConfig) -> Self {
 		Self { ldap_config }
-	}
-
-	/// Get user changes from an ldap receiver
-	pub async fn get_user_changes(
-		&self,
-		ldap_receiver: Receiver<EntryStatus>,
-	) -> Result<Vec<User>> {
-		ReceiverStream::new(ldap_receiver)
-			.fold(Ok(vec![]), |acc, entry_status| {
-				let mut added = acc?;
-				if let EntryStatus::New(entry) = entry_status {
-					tracing::debug!("New entry: {:?}", entry);
-					added.push(self.parse_user(entry)?);
-				};
-				Ok(added)
-			})
-			.await
 	}
 
 	/// Construct a user from an LDAP SearchEntry
@@ -153,19 +171,30 @@ fn read_string_entry(
 fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Result<StringOrBytes> {
 	match attribute {
 		AttributeMapping::OptionalBinary { name, is_binary: false }
-		| AttributeMapping::NoBinaryOption(name) => {
-			entry.attr_first(name).map(|entry| StringOrBytes::String(entry.to_owned()))
-		}
+		| AttributeMapping::NoBinaryOption(name) => entry
+			.attrs
+			.get(name)
+			.and_then(|entry| entry.first())
+			.map(|entry| StringOrBytes::String(entry.to_owned())),
+
 		AttributeMapping::OptionalBinary { name, is_binary: true } => entry
-			.bin_attr_first(name)
+			.bin_attrs
+			.get(name)
 			// If an entry encodes as UTF-8, it will still only be
 			// available from the `.attr_first` function, even if ldap
 			// presents it with the `::` delimiter.
 			//
 			// Hence the configuration, we just treat it as binary
 			// data if this is requested.
-			.or_else(|| entry.attr_first(name).map(str::as_bytes))
-			.map(|entry| StringOrBytes::Bytes(entry.to_vec())),
+			.and_then(|entry| entry.first().cloned())
+			.or_else(|| {
+				entry
+					.attrs
+					.get(name)
+					.and_then(|entry| entry.first())
+					.map(|entry| entry.as_bytes().to_vec())
+			})
+			.map(StringOrBytes::Bytes),
 	}
 	.ok_or(anyhow!("missing `{}` values for `{}`", attribute, entry.dn))
 }
@@ -199,56 +228,67 @@ pub struct LdapSourceConfig {
 	pub tls: Option<LdapTlsConfig>,
 }
 
-impl From<LdapSourceConfig> for ldap_poller::Config {
-	fn from(cfg: LdapSourceConfig) -> ldap_poller::Config {
-		let starttls = cfg.tls.as_ref().is_some_and(|tls| tls.danger_use_start_tls);
-		let no_tls_verify = cfg.tls.as_ref().is_some_and(|tls| tls.danger_disable_tls_verify);
-		let root_certificates_path =
-			cfg.tls.as_ref().and_then(|tls| tls.server_certificate.clone());
-		let client_key_path = cfg.tls.as_ref().and_then(|tls| tls.client_key.clone());
-		let client_certificate_path =
-			cfg.tls.as_ref().and_then(|tls| tls.client_certificate.clone());
+impl LdapSourceConfig {
+	/// Get the attribute list, taking into account whether we should
+	/// be using the attribute filter or not.
+	fn get_attribute_list(self) -> Vec<String> {
+		if self.use_attribute_filter {
+			self.attributes.get_attribute_list()
+		} else {
+			vec!["*".to_owned()]
+		}
+	}
+}
 
-		let tls = TLSConfig {
-			starttls,
-			no_tls_verify,
-			root_certificates_path,
-			client_key_path,
-			client_certificate_path,
+impl TryFrom<LdapSourceConfig> for LdapConnSettings {
+	type Error = anyhow::Error;
+
+	fn try_from(cfg: LdapSourceConfig) -> Result<Self> {
+		let mut settings = LdapConnSettings::new()
+			.set_starttls(cfg.tls.as_ref().is_some_and(|tls| tls.danger_use_start_tls))
+			.set_no_tls_verify(cfg.tls.as_ref().is_some_and(|tls| tls.danger_disable_tls_verify));
+
+		if let Some(tls) = cfg.tls {
+			let root_cert: Option<Certificate> = tls
+				.server_certificate
+				.as_ref()
+				.map(std::fs::read)
+				.transpose()
+				.context("Failed to read server certificate")?
+				.map(|cert_data| Certificate::from_pem(cert_data.as_slice()))
+				.transpose()
+				.context("Invalid server certificate")?;
+
+			let identity: Option<Identity> = match (tls.client_key, tls.client_certificate) {
+				(Some(client_key), Some(client_cert)) => Some(
+					Identity::from_pkcs8(
+						std::fs::read(client_cert)?.as_slice(),
+						std::fs::read(client_key)?.as_slice(),
+					)
+					.context("Could not create client identity")?,
+				),
+				(None, None) => None,
+				_ => {
+					bail!("Both client key *and* certificate must be specified")
+				}
+			};
+
+			if root_cert.is_some() || identity.is_some() {
+				let mut connector = TlsConnector::builder();
+
+				if let Some(root_cert) = root_cert {
+					connector.add_root_certificate(root_cert);
+				}
+
+				if let Some(identity) = identity {
+					connector.identity(identity);
+				}
+
+				settings = settings.set_connector(connector.build()?);
+			};
 		};
 
-		let attributes = cfg.attributes;
-		ldap_poller::Config {
-			url: cfg.url,
-			connection: ConnectionConfig {
-				timeout: cfg.timeout,
-				operation_timeout: std::time::Duration::from_secs(cfg.timeout),
-				tls,
-			},
-			search_user: cfg.bind_dn,
-			search_password: cfg.bind_password,
-			searches: Searches {
-				user_base: cfg.base_dn,
-				user_filter: cfg.user_filter,
-				page_size: None,
-			},
-			attributes: AttributeConfig {
-				pid: attributes.user_id.get_name(),
-				updated: attributes.last_modified.map(AttributeMapping::get_name),
-				additional: vec![],
-				filter_attributes: cfg.use_attribute_filter,
-				attrs_to_track: vec![
-					attributes.status.get_name(),
-					attributes.first_name.get_name(),
-					attributes.last_name.get_name(),
-					attributes.preferred_username.get_name(),
-					attributes.email.get_name(),
-					attributes.phone.get_name(),
-				],
-			},
-			cache_method: CacheMethod::Disabled,
-			check_for_deleted_entries: cfg.check_for_deleted_entries,
-		}
+		Ok(settings)
 	}
 }
 
@@ -277,6 +317,30 @@ pub struct LdapAttributesMapping {
 	pub disable_bitmasks: Vec<i32>,
 	/// Last modified
 	pub last_modified: Option<AttributeMapping>,
+}
+
+impl LdapAttributesMapping {
+	/// Get the attribute list; *Some* LDAP implementations accept
+	/// `[*]` to report all attributes, but notably AD does not, so we
+	/// need to send an exhaustive list of all attributes we want to
+	/// get back.
+	fn get_attribute_list(self) -> Vec<String> {
+		let mut attrs = vec![
+			self.first_name.get_name(),
+			self.last_name.get_name(),
+			self.preferred_username.get_name(),
+			self.email.get_name(),
+			self.phone.get_name(),
+			self.user_id.get_name(),
+			self.status.get_name(),
+		];
+
+		if let Some(last_modified) = self.last_modified {
+			attrs.push(last_modified.get_name());
+		}
+
+		attrs
+	}
 }
 
 /// How an attribute should be defined in config - it can either be a
@@ -359,9 +423,8 @@ mod tests {
 	use std::collections::HashMap;
 
 	use indoc::indoc;
+	use itertools::Itertools;
 	use ldap3::SearchEntry;
-	use ldap_poller::ldap::EntryStatus;
-	use tokio::sync::mpsc;
 
 	use crate::{sources::ldap::LdapSource, Config};
 
@@ -390,6 +453,7 @@ mod tests {
               email: "mail"
               phone: "telephoneNumber"
               user_id: "uid"
+              last_modified: "timestamp"
               status:
                 name: "shadowFlag"
                 is_binary: false
@@ -423,104 +487,33 @@ mod tests {
 	#[test]
 	fn test_attribute_filter_use() {
 		let config = load_config();
-
 		let ldap_config = config.sources.ldap.expect("Expected LDAP config");
 
 		assert_eq!(
-			Into::<ldap_poller::Config>::into(ldap_config).attributes.get_attr_filter(),
-			vec!["uid", "shadowFlag", "cn", "sn", "displayName", "mail", "telephoneNumber"]
+			ldap_config.get_attribute_list().into_iter().sorted().collect_vec(),
+			vec![
+				"uid",
+				"shadowFlag",
+				"cn",
+				"sn",
+				"displayName",
+				"mail",
+				"telephoneNumber",
+				"timestamp"
+			]
+			.into_iter()
+			.sorted()
+			.collect_vec()
 		);
 	}
 
 	#[test]
 	fn test_no_attribute_filters() {
 		let config = load_config();
-
 		let mut ldap_config = config.sources.ldap.as_ref().expect("Expected LDAP config").clone();
-
 		ldap_config.use_attribute_filter = false;
 
-		assert_eq!(
-			Into::<ldap_poller::Config>::into(ldap_config).attributes.get_attr_filter(),
-			vec!["*"]
-		);
-	}
-
-	#[tokio::test]
-	async fn test_get_user_changes_new_and_changed() {
-		let (tx, rx) = mpsc::channel(32);
-		let config = load_config();
-		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
-
-		let mut user = new_user();
-
-		// Simulate new user entry
-		tx.send(EntryStatus::New(SearchEntry {
-			dn: "uid=testuser,ou=testorg,dc=example,dc=org".to_owned(),
-			attrs: user.clone(),
-			bin_attrs: HashMap::new(),
-		}))
-		.await
-		.unwrap();
-
-		// Modify user attributes to simulate a change
-		user.insert("mail".to_owned(), vec!["newemail@example.com".to_owned()]);
-		user.insert("telephoneNumber".to_owned(), vec!["987654321".to_owned()]);
-
-		// Simulate changed user entry
-		tx.send(EntryStatus::Changed {
-			old: SearchEntry {
-				dn: "uid=testuser,ou=testorg,dc=example,dc=org".to_owned(),
-				attrs: new_user(),
-				bin_attrs: HashMap::new(),
-			},
-			new: SearchEntry {
-				dn: "uid=testuser,ou=testorg,dc=example,dc=org".to_owned(),
-				attrs: user.clone(),
-				bin_attrs: HashMap::new(),
-			},
-		})
-		.await
-		.unwrap();
-
-		// Close the sender side of the channel
-		drop(tx);
-
-		let result = ldap_source.get_user_changes(rx).await;
-
-		assert!(result.is_ok(), "Failed to get user changes: {:?}", result);
-		let added = result.unwrap();
-		assert_eq!(added.len(), 1, "Unexpected number of added users");
-	}
-
-	#[tokio::test]
-	async fn test_get_user_changes_removed() {
-		let (tx, rx) = mpsc::channel(32);
-		let config = load_config();
-		let ldap_source = LdapSource { ldap_config: config.sources.ldap.unwrap() };
-
-		let user = new_user();
-
-		// Simulate new user entry
-		tx.send(EntryStatus::New(SearchEntry {
-			dn: "uid=testuser,ou=testorg,dc=example,dc=org".to_owned(),
-			attrs: user.clone(),
-			bin_attrs: HashMap::new(),
-		}))
-		.await
-		.unwrap();
-
-		// Simulate removed user entry
-		tx.send(EntryStatus::Removed("uid=testuser".as_bytes().to_vec())).await.unwrap();
-
-		// Close the sender side of the channel
-		drop(tx);
-
-		let result = ldap_source.get_user_changes(rx).await;
-
-		assert!(result.is_ok(), "Failed to get user changes: {:?}", result);
-		let added = result.unwrap();
-		assert_eq!(added.len(), 1, "Unexpected number of added users");
+		assert_eq!(ldap_config.get_attribute_list(), vec!["*"]);
 	}
 
 	#[tokio::test]
