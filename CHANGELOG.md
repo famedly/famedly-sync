@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] - 2025-02-14
+
+### Bug Fixes
+
+- Update file paths in documentation
+- Update sample configuration path
+- Rework internals to make localparts non-optional
+
+### Documentation
+
+- Add warning about service user scopes
+- Document migration steps
+
+### Features
+
+- Make user comparison log lines less verbose
+- Expose migration binary in the docker image
+
+### Refactor
+
+- Switch from ldap_poller to a direct implementation
+
+### Styling
+
+- Fix indentation issue that snuck in
+
 ## [0.9.0] - 2024-12-13
 
 ### Features
