@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1-rc1] - 2025-02-04
+
+### Bug Fixes
+
+- Update file paths in documentation
+- Update sample configuration path
+
+### Documentation
+
+- Add warning about service user scopes
+
 ## [0.9.0] - 2024-12-13
 
 ### Features
