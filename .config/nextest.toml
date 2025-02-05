@@ -8,6 +8,9 @@ experimental = ["setup-scripts"]
 # already exist) - we don't want this.
 e2e = { max-threads = 1 }
 
+[script.sed-mounts-ci]
+command = "./.config/sedmounts.sh"
+
 [script.start-e2e-env]
 command =  "./.config/starte2e.sh"
 
@@ -26,3 +29,7 @@ fail-fast = false
 path = "junit.xml"
 store-success-output = true
 store-failure-output = true
+
+[[profile.ci.scripts]]
+filter = "test(e2e)"
+setup = "sed-mounts-ci"

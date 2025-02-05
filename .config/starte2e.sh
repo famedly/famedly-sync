@@ -18,6 +18,8 @@ then
 ldap_down="-v ldap"
 fi
 
+cat ./tests/environment/docker-compose.yaml
+
 # Shut down any still running test-setup first
 docker compose --project-directory ./tests/environment down -v test-setup $ldap_down || true
 docker compose --project-directory ./tests/environment up --wait
