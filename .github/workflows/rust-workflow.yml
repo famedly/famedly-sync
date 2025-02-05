@@ -8,9 +8,6 @@ on:
   pull_request:
     branches: [ "*" ]
 
-env:
-  CARGO_TERM_COLOR: always
-
 # Make sure there is no pipeline running uselessly.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,91 +15,6 @@ concurrency:
 
 # Defined CI jobs.
 jobs:
-  simple-checks:
-    container: docker-oss.nexus.famedly.de/rust-container:nightly
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout current repository
-      uses: actions/checkout@v4
-
-    - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
-      with:
-        gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
-        gitlab_user: ${{ secrets.GITLAB_USER }}
-        gitlab_pass: ${{ secrets.GITLAB_PASS }}
-
-    - name: Caching
-      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
-      with:
-        cache-on-failure: true
-        cache-all-crates: true
-
-    - name: Rustfmt
-      shell: bash
-      run: cargo +${NIGHTLY_VERSION} fmt -- --check
-
-    - name: Clippy
-      shell: bash
-      run: cargo +${NIGHTLY_VERSION} clippy --workspace --all-targets -- -D warnings
-
-    - name: Doc-test
-      shell: bash
-      run: cargo +${NIGHTLY_VERSION} test --doc --workspace --verbose
-
-    - name: Udeps
-      shell: bash
-      run: cargo +${NIGHTLY_VERSION} udeps
-
-    - name: Typos
-      shell: bash
-      run: typos --exclude '*.key' --exclude '*.crt' --exclude '*.csr' --exclude '*.srl'
-
   tests:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout current repository
-      uses: actions/checkout@v4
-
-    - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
-      with:
-        gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
-        gitlab_user: ${{ secrets.GITLAB_USER }}
-        gitlab_pass: ${{ secrets.GITLAB_PASS }}
-
-    - name: Add llvm-tools rust component
-      run: rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
-
-    - name: Caching
-      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
-      with:
-        cache-on-failure: true
-        cache-all-crates: true
-
-    - name: Install additional cargo tooling
-      shell: bash
-      run: cargo install cargo-nextest cargo-llvm-cov --locked
-
-    - name: Test
-      timeout-minutes: 20
-      shell: bash
-      run: |
-        docker compose --project-directory ./tests/environment down -v
-        cargo llvm-cov nextest --profile ci --workspace --lcov --output-path lcov.info
-
-    - name: Get docker logs on failure
-      shell: bash
-      if: failure()
-      run: |
-        docker compose --project-directory ./tests/environment logs
-
-    - name: Codecov - Upload coverage
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{secrets.CODECOV_TOKEN}}
-        files: lcov.info
-
-    - name: Codecov - Upload test results
-      uses: codecov/test-results-action@v1
-      with:
-        token: ${{secrets.CODECOV_TOKEN}}
-
+    uses: famedly/backend-build-workflows/.github/workflows/rust-workflow.yml@ccb800fdb716ff3b8459f19bb9ceb56544d0798e
+    secrets: inherit

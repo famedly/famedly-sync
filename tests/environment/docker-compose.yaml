@@ -3,7 +3,7 @@ services:
     image: alpine/openssl:3.3.2
     volumes:
       - type: bind
-        source: ./certs
+        source: ${ENV_PATH}/certs
         target: /certs
     entrypoint: /certs/generate-certs.sh
 
@@ -20,7 +20,7 @@ services:
       - LDAP_TLS_VERIFY_CLIENTS=try
     volumes:
       - type: bind
-        source: ./certs
+        source: ${ENV_PATH}/certs
         target: /certs
         read_only: true
     depends_on:
@@ -34,10 +34,10 @@ services:
     entrypoint: /environment/test-setup.sh
     volumes:
       - type: bind
-        source: ./
+        source: ${ENV_PATH}/
         target: /environment
       - type: bind
-        source: ./config.template.yaml
+        source: ${ENV_PATH}/config.template.yaml
         target: /config.template.yaml
         read_only: true
     healthcheck:
@@ -59,7 +59,7 @@ services:
       - 8080:8080
     volumes:
       - type: bind
-        source: ./zitadel/
+        source: ${ENV_PATH}/zitadel/
         target: /zitadel-config/
     depends_on:
       db:

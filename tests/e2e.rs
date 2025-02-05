@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 /// E2E integration tests
-use std::{collections::HashSet, path::Path, pin::pin, time::Duration};
+use std::{collections::HashSet, path::PathBuf, pin::pin, time::Duration};
 
 use base64::{engine::general_purpose, Engine as _};
 use famedly_sync::{
@@ -2060,13 +2060,15 @@ async fn cleanup_test_users(config: &Config) {
 
 /// Get the module's test environment config
 async fn ldap_config() -> &'static Config {
+	let config_dir = std::env::var("TEST_ENV").map(PathBuf::from).expect("Cannot find config dir");
+
 	CONFIG_WITH_LDAP
 		.get_or_init(|| async {
-			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
+			let mut config = Config::new(&config_dir.join("config.yaml"))
 				.expect("failed to parse test env file");
 
 			config.sources.ldap = serde_yaml::from_slice(
-				&std::fs::read(Path::new("tests/environment/ldap-config.template.yaml"))
+				&std::fs::read(config_dir.join("ldap-config.template.yaml"))
 					.expect("failed to read ldap config file"),
 			)
 			.expect("failed to parse ldap config");
@@ -2078,13 +2080,15 @@ async fn ldap_config() -> &'static Config {
 
 /// Get the module's test environment config
 async fn ukt_config() -> &'static Config {
+	let config_dir = std::env::var("TEST_ENV").map(PathBuf::from).expect("Cannot find config dir");
+
 	CONFIG_WITH_UKT
 		.get_or_init(|| async {
-			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
+			let mut config = Config::new(&config_dir.join("config.yaml"))
 				.expect("failed to parse test env file");
 
 			config.sources.ukt = serde_yaml::from_slice(
-				&std::fs::read(Path::new("tests/environment/ukt-config.template.yaml"))
+				&std::fs::read(config_dir.join("ukt-config.template.yaml"))
 					.expect("failed to read ukt config file"),
 			)
 			.expect("failed to parse ukt config");
@@ -2096,13 +2100,15 @@ async fn ukt_config() -> &'static Config {
 
 /// Get the module's test environment config
 async fn csv_config() -> &'static Config {
+	let config_dir = std::env::var("TEST_ENV").map(PathBuf::from).expect("Cannot find config dir");
+
 	CONFIG_WITH_CSV
 		.get_or_init(|| async {
-			let mut config = Config::new(Path::new("tests/environment/config.yaml"))
+			let mut config = Config::new(&config_dir.join("config.yaml"))
 				.expect("failed to parse test env file");
 
 			config.sources.csv = serde_yaml::from_slice(
-				&std::fs::read(Path::new("tests/environment/csv-config.template.yaml"))
+				&std::fs::read(config_dir.join("csv-config.template.yaml"))
 					.expect("failed to read csv config file"),
 			)
 			.expect("failed to parse csv config");
