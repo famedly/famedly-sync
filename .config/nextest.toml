@@ -9,7 +9,7 @@ experimental = ["setup-scripts"]
 e2e = { max-threads = 1 }
 
 [script.sed-mounts-ci]
-command = "./.config/sedmounts.sh"
+command = "./.config/setupci.sh"
 
 [script.start-e2e-env]
 command =  "./.config/starte2e.sh"
