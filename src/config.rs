@@ -65,6 +65,9 @@ impl Config {
 	/// Validate the config and return a valid configuration
 	fn validate(mut self) -> Result<Self> {
 		self.zitadel.url = validate_zitadel_url(self.zitadel.url)?;
+		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) && self.zitadel.idp_id.is_none() {
+			bail!("For SSO login, a Zitadel IDP ID must be defined");
+		};
 
 		Ok(self)
 	}

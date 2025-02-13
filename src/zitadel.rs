@@ -192,9 +192,15 @@ impl Zitadel {
 		};
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
+			let Some(idp_id) = self.zitadel_config.idp_id.clone() else {
+				// This is technically unreachable, since this is
+				// checked at the config level
+				bail!("To configure SSO, a Zitadel IDP ID must be defined");
+			};
+
 			user.set_idp_links(vec![IdpLink::new()
 				.with_user_id(get_zitadel_encoded_id(imported_user.get_external_id_bytes()?))
-				.with_idp_id(self.zitadel_config.idp_id.clone())
+				.with_idp_id(idp_id)
 				.with_user_name(imported_user.email.clone())]);
 		}
 
@@ -480,5 +486,5 @@ pub struct ZitadelConfig {
 	/// Project ID provided by Famedly Zitadel
 	pub project_id: String,
 	/// IDP ID provided by Famedly Zitadel
-	pub idp_id: String,
+	pub idp_id: Option<String>,
 }
