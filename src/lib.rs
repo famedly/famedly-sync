@@ -141,7 +141,11 @@ async fn sync_users(config: &Config, sync_users: &mut VecDeque<User>) -> Result<
 	let mut zitadel_user = get_next_zitadel_user(&mut stream, &mut zitadel).await?;
 
 	loop {
-		tracing::debug!("Comparing users {:?} and {:?}", source_user, zitadel_user);
+		tracing::debug!(
+			"Comparing users {:?} and {:?}",
+			source_user.as_ref().map(|user| user.external_user_id.clone()),
+			zitadel_user.as_ref().map(|user| user.0.external_user_id.clone())
+		);
 
 		match (source_user.clone(), zitadel_user.clone()) {
 			(None, None) => {
