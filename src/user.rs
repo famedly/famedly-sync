@@ -207,9 +207,9 @@ impl User {
 					ExternalIdEncoding::Plain => hex::encode(self.external_user_id.as_bytes()),
 					ExternalIdEncoding::Ambiguous => {
 						tracing::error!(
-                      ?self,
-                      "Unreachable code? Ambiguous encoding detected despite case-by-case handling."
-                  );
+							?self,
+							"Unreachable code? Ambiguous encoding detected despite case-by-case handling."
+						);
 						unreachable!("Ambiguous encoding should not be detected here");
 					}
 				}
