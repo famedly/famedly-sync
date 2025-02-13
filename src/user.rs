@@ -1,8 +1,7 @@
 //! User data helpers
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use uuid::{uuid, Uuid};
-use zitadel_rust_client::v2::users::HumanUser;
 
 /// The Famedly UUID namespace to use to generate v5 UUIDs.
 const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
@@ -20,6 +19,12 @@ pub enum ExternalIdEncoding {
 	Ambiguous,
 }
 
+/// Compute the famedly UUID for a given byte string
+#[must_use]
+pub fn compute_famedly_uuid(external_id: &[u8]) -> String {
+	Uuid::new_v5(&FAMEDLY_NAMESPACE, external_id).to_string()
+}
+
 /// Source-agnostic representation of a user
 #[derive(Clone)]
 pub struct User {
@@ -34,11 +39,11 @@ pub struct User {
 	/// Whether the user is enabled
 	pub(crate) enabled: bool,
 	/// The user's preferred username
-	pub(crate) preferred_username: Option<String>,
+	pub(crate) preferred_username: String,
 	/// The user's external (non-Zitadel) ID
 	pub(crate) external_user_id: String,
 	/// The user's localpart (used as Zitadel userId)
-	pub(crate) localpart: Option<String>,
+	pub(crate) localpart: String,
 }
 
 impl User {
@@ -50,9 +55,9 @@ impl User {
 		email: String,
 		phone: Option<String>,
 		enabled: bool,
-		preferred_username: Option<String>,
+		preferred_username: String,
 		external_user_id: String,
-		localpart: Option<String>,
+		localpart: String,
 	) -> Self {
 		Self {
 			first_name,
@@ -66,40 +71,6 @@ impl User {
 		}
 	}
 
-	/// Convert a Zitadel user to our internal representation
-	pub fn try_from_zitadel_user(user: HumanUser, external_id: String) -> Result<Self> {
-		let first_name = user
-			.profile()
-			.and_then(|profile| profile.given_name())
-			.ok_or(anyhow!("Missing first name for {}", external_id))?
-			.clone();
-
-		let last_name = user
-			.profile()
-			.and_then(|profile| profile.family_name())
-			.ok_or(anyhow!("Missing last name for {}", external_id))?
-			.clone();
-
-		let email = user
-			.email()
-			.and_then(|human_email| human_email.email())
-			.ok_or(anyhow!("Missing email address for {}", external_id))?
-			.clone();
-
-		let phone = user.phone().and_then(|human_phone| human_phone.phone());
-
-		Ok(Self {
-			first_name,
-			last_name,
-			email,
-			phone: phone.cloned(),
-			preferred_username: None,
-			external_user_id: external_id,
-			enabled: true,
-			localpart: None,
-		})
-	}
-
 	/// Get a display name for this user
 	#[must_use]
 	pub fn get_display_name(&self) -> String {
@@ -108,8 +79,8 @@ impl User {
 
 	/// Get the localpart
 	#[must_use]
-	pub fn get_localpart(&self) -> Option<&str> {
-		self.localpart.as_deref()
+	pub fn get_localpart(&self) -> &str {
+		self.localpart.as_ref()
 	}
 
 	/// Get the external user ID
@@ -126,11 +97,6 @@ impl User {
 		// know the original bytes, and must always decode the
 		// external user ID to get those.
 		hex::decode(&self.external_user_id).context("Invalid external user ID")
-	}
-
-	/// Get the famedly UUID of this user
-	pub fn get_famedly_uuid(&self) -> Result<String> {
-		Ok(Uuid::new_v5(&FAMEDLY_NAMESPACE, self.get_external_id_bytes()?.as_slice()).to_string())
 	}
 
 	/// Convert external user ID to a new format based on the detected encoding

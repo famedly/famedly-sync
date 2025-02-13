@@ -11,7 +11,7 @@ use serde::Deserialize;
 use url::Url;
 
 use super::Source;
-use crate::user::User;
+use crate::user::{self, User};
 
 /// LDAP sync source
 pub struct LdapSource {
@@ -119,11 +119,17 @@ impl LdapSource {
 			bail!("Binary status without disable_bitmasks");
 		};
 
-		let ldap_user_id = match read_search_entry(&entry, &self.ldap_config.attributes.user_id)? {
-			// Use hex encoding instead of base64 for consistent alphabetical order
-			StringOrBytes::Bytes(byte_id) => hex::encode(byte_id),
-			StringOrBytes::String(string_id) => hex::encode(string_id.as_bytes()),
-		};
+		let (ldap_user_id, localpart) =
+			match read_search_entry(&entry, &self.ldap_config.attributes.user_id)? {
+				// Use hex encoding instead of base64 for consistent alphabetical order
+				StringOrBytes::Bytes(byte_id) => {
+					(hex::encode(&byte_id), user::compute_famedly_uuid(&byte_id))
+				}
+				StringOrBytes::String(string_id) => (
+					hex::encode(string_id.as_bytes()),
+					user::compute_famedly_uuid(string_id.as_bytes()),
+				),
+			};
 
 		let first_name =
 			read_string_entry(&entry, &self.ldap_config.attributes.first_name, &ldap_user_id)?;
@@ -141,12 +147,12 @@ impl LdapSource {
 		Ok(User {
 			first_name,
 			last_name,
-			preferred_username: Some(preferred_username),
+			preferred_username,
 			email,
 			external_user_id: ldap_user_id,
 			phone,
 			enabled,
-			localpart: None,
+			localpart,
 		})
 	}
 }
@@ -532,10 +538,10 @@ mod tests {
 		let user = result.unwrap();
 		assert_eq!(user.first_name, "Test");
 		assert_eq!(user.last_name, "User");
-		assert_eq!(user.preferred_username, Some("testuser".to_owned()));
+		assert_eq!(user.preferred_username, "testuser".to_owned());
 		assert_eq!(user.email, "testuser@example.com");
 		assert_eq!(user.phone, Some("123456789".to_owned()));
-		assert_eq!(user.preferred_username, Some("testuser".to_owned()));
+		assert_eq!(user.preferred_username, "testuser".to_owned());
 		assert_eq!(user.external_user_id, hex::encode("testuser"));
 		assert!(user.enabled);
 	}

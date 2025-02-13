@@ -1,7 +1,7 @@
 //! Helper functions for submitting data to Zitadel
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -70,7 +70,7 @@ impl Zitadel {
 	pub fn get_users_by_email(
 		&mut self,
 		emails: Vec<String>,
-	) -> Result<impl Stream<Item = Result<(User, String)>> + Send> {
+	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
 		self.zitadel_client
 			.list_users(
 				ListUsersRequest::new(vec![
@@ -92,7 +92,9 @@ impl Zitadel {
 	}
 
 	/// Return a stream of Zitadel users
-	pub fn list_users(&mut self) -> Result<impl Stream<Item = Result<(User, String)>> + Send> {
+	pub fn list_users(
+		&mut self,
+	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
 		self.zitadel_client
 			.list_users(
 				ListUsersRequest::new(vec![
@@ -161,22 +163,12 @@ impl Zitadel {
 			return Ok(());
 		}
 
-		// Use the localpart from the user if available, otherwise generate one
-		let localpart = if let Some(localpart) = &imported_user.localpart {
-			localpart.clone()
-		} else if self.feature_flags.contains(&FeatureFlag::PlainLocalpart) {
-			String::from_utf8(imported_user.get_external_id_bytes()?)
-				.context(format!("Unsupported binary external ID for user: {:?}", imported_user))?
-		} else {
-			imported_user.get_famedly_uuid()?
-		};
-
-		let mut metadata = vec![SetMetadataEntry::new("localpart".to_owned(), localpart.clone())];
-
-		if let Some(preferred_username) = imported_user.preferred_username.clone() {
-			metadata
-				.push(SetMetadataEntry::new("preferred_username".to_owned(), preferred_username));
-		}
+		let mut metadata =
+			vec![SetMetadataEntry::new("localpart".to_owned(), imported_user.localpart.clone())];
+		metadata.push(SetMetadataEntry::new(
+			"preferred_username".to_owned(),
+			imported_user.preferred_username.clone(),
+		));
 
 		let mut user = AddHumanUserRequest::new(
 			SetHumanProfile::new(imported_user.first_name.clone(), imported_user.last_name.clone())
@@ -189,7 +181,7 @@ impl Zitadel {
 			Organization::new().with_org_id(self.zitadel_config.organization_id.clone()),
 		)
 		.with_metadata(metadata)
-		.with_user_id(localpart); // Set the Zitadel userId to the localpart
+		.with_user_id(imported_user.localpart.clone()); // Set the Zitadel userId to the localpart
 
 		if let Some(phone) = imported_user.phone.clone() {
 			user.set_phone(
@@ -257,8 +249,8 @@ impl Zitadel {
 		// Check if localpart has changed and emit warning if it has
 		if old_user.localpart != updated_user.localpart {
 			tracing::warn!(
-				"Cannot update Zitadel userId (localpart) for user {:?} having old localpart: {:?}, and new localpart: {:?}",
-				old_user,
+				"Refusing to change user localparts for user {} from {} to {}",
+				old_user.external_user_id,
 				old_user.localpart,
 				updated_user.localpart
 			);
@@ -324,17 +316,13 @@ impl Zitadel {
 		};
 
 		if old_user.preferred_username != updated_user.preferred_username {
-			if let Some(preferred_username) = updated_user.preferred_username.clone() {
-				self.zitadel_client
-					.set_user_metadata(
-						zitadel_id,
-						"preferred_username",
-						&preferred_username.clone(),
-					)
-					.await?;
-			} else {
-				self.zitadel_client.delete_user_metadata(zitadel_id, "preferred_username").await?;
-			}
+			self.zitadel_client
+				.set_user_metadata(
+					zitadel_id,
+					"preferred_username",
+					&updated_user.preferred_username.clone(),
+				)
+				.await?;
 		}
 
 		Ok(())
@@ -342,18 +330,126 @@ impl Zitadel {
 }
 
 /// Convert a Zitadel search result to a user
-pub fn search_result_to_user(user: ZitadelUser) -> Result<User> {
+pub fn search_result_to_user(user: ZitadelUser) -> Result<ZitadelUserBuilder> {
 	let human_user = user.human().ok_or(anyhow!("Machine user found in human user search"))?;
-	let nick_name = human_user
+	let external_id = human_user
 		.profile()
 		.and_then(|p| p.nick_name())
 		.ok_or(anyhow!("Missing external ID found for user"))?;
 
+	let first_name = human_user
+		.profile()
+		.and_then(|profile| profile.given_name())
+		.ok_or(anyhow!("Missing first name for {}", external_id))?
+		.clone();
+
+	let last_name = human_user
+		.profile()
+		.and_then(|profile| profile.family_name())
+		.ok_or(anyhow!("Missing last name for {}", external_id))?
+		.clone();
+
+	let email = human_user
+		.email()
+		.and_then(|human_email| human_email.email())
+		.ok_or(anyhow!("Missing email address for {}", external_id))?
+		.clone();
+
+	let phone = human_user.phone().and_then(|human_phone| human_phone.phone());
+
 	// TODO: If async closures become a reality, we
 	// should capture the correct preferred_username and localpart from metadata
 	// here.
-	let user = User::try_from_zitadel_user(human_user.clone(), nick_name.clone())?;
+	let user = ZitadelUserBuilder::new(
+		first_name,
+		last_name,
+		email,
+		external_id.to_owned(),
+		phone.cloned(),
+	);
 	Ok(user)
+}
+
+/// A builder for a `User` to be used for users gathered from Zitadel
+#[derive(Debug)]
+pub struct ZitadelUserBuilder {
+	/// The user's first name
+	first_name: String,
+	/// The user's last name
+	last_name: String,
+	/// The user's email address
+	email: String,
+	/// The user's external ID
+	external_user_id: String,
+
+	/// The user's preferred username - must be set before building
+	preferred_username: Option<String>,
+	/// The user's localpart - must be set before building
+	localpart: Option<String>,
+
+	/// The user's phone number
+	phone: Option<String>,
+}
+
+impl ZitadelUserBuilder {
+	/// Basic constructor
+	#[must_use]
+	pub fn new(
+		first_name: String,
+		last_name: String,
+		email: String,
+		external_user_id: String,
+		phone: Option<String>,
+	) -> Self {
+		Self {
+			first_name,
+			last_name,
+			email,
+			external_user_id,
+			phone,
+
+			preferred_username: None,
+			localpart: None,
+		}
+	}
+
+	/// Set the user's localpart
+	#[must_use]
+	pub fn with_localpart(mut self, localpart: String) -> Self {
+		self.localpart = Some(localpart);
+		self
+	}
+
+	/// Set the user's preferred username
+	#[must_use]
+	pub fn with_preferred_username(mut self, preferred_username: String) -> Self {
+		self.preferred_username = Some(preferred_username);
+		self
+	}
+
+	/// Build the resulting user struct - this will return an `Err`
+	/// variant if the localpart or preferred username are missing
+	pub fn build(self) -> Result<User> {
+		let Some(localpart) = self.localpart else {
+			bail!("No valid localpart set");
+		};
+
+		let Some(preferred_username) = self.preferred_username else {
+			bail!("No valid preferred username set");
+		};
+
+		Ok(User {
+			first_name: self.first_name,
+			last_name: self.last_name,
+			email: self.email,
+			phone: self.phone,
+			enabled: true,
+			external_user_id: self.external_user_id,
+
+			localpart,
+			preferred_username,
+		})
+	}
 }
 
 /// Get a base64-encoded external user ID, if the ID is raw bytes,

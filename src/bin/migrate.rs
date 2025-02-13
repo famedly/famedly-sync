@@ -111,23 +111,54 @@ fn detect_database_encoding(users: Vec<SyncUser>) -> ExternalIdEncoding {
 
 #[cfg(test)]
 mod tests {
+	use base64::prelude::*;
+	use famedly_sync::user;
+
 	use super::*;
 	use crate::{ExternalIdEncoding, SyncUser};
 
-	fn create_test_user(external_user_id: &str) -> SyncUser {
+	enum UserId {
+		Hex(String),
+		Base64(String),
+		Plain(String),
+	}
+
+	impl UserId {
+		fn to_owned(&self) -> String {
+			match self {
+				UserId::Hex(id) => id.to_owned(),
+				UserId::Base64(id) => id.to_owned(),
+				UserId::Plain(id) => id.to_owned(),
+			}
+		}
+
+		fn get_localpart(&self) -> String {
+			match self {
+				Self::Hex(id) => user::compute_famedly_uuid(
+					&hex::decode(id).expect("Must be valid hex-encoded string"),
+				),
+				UserId::Base64(id) => user::compute_famedly_uuid(
+					&BASE64_STANDARD.decode(id).expect("Must be valid base64-encoded string"),
+				),
+				UserId::Plain(id) => user::compute_famedly_uuid(id.as_bytes()),
+			}
+		}
+	}
+
+	fn create_test_user(external_user_id: UserId) -> SyncUser {
 		SyncUser::new(
 			"first name".to_owned(),
 			"last name".to_owned(),
 			"email@example.com".to_owned(),
 			None,
 			true,
-			None,
+			"Example User".to_owned(),
 			external_user_id.to_owned(),
-			None,
+			external_user_id.get_localpart(),
 		)
 	}
 
-	fn run_detection_test(user_ids: Vec<&str>, expected_encoding: ExternalIdEncoding) {
+	fn run_detection_test(user_ids: Vec<UserId>, expected_encoding: ExternalIdEncoding) {
 		let users: Vec<SyncUser> = user_ids
 			.into_iter()
 			.map(create_test_user) // Assuming SyncUser::new(&str) exists
@@ -142,7 +173,7 @@ mod tests {
 	}
 
 	fn run_conversion_test(
-		original_id: &str,
+		original_id: UserId,
 		expected_encoding: ExternalIdEncoding,
 		expected_result: &str,
 	) {
@@ -160,7 +191,11 @@ mod tests {
 	#[tokio::test]
 	async fn test_all_hex() {
 		// All users look like hex: "deadbeef", "cafebabe", "0123456789abcdef"
-		let user_ids = vec!["deadbeef", "cafebabe", "0123456789abcdef"];
+		let user_ids = vec![
+			UserId::Hex("deadbeef".to_owned()),
+			UserId::Hex("cafebabe".to_owned()),
+			UserId::Hex("0123456789abcdef".to_owned()),
+		];
 		run_detection_test(user_ids, ExternalIdEncoding::Hex);
 	}
 
@@ -171,14 +206,25 @@ mod tests {
 		// "Zm9v" decodes to "foo"
 		// "YmFy" decodes to "bar"
 		// All are valid base64 and length % 4 == 0
-		let user_ids = vec!["Y2FmZQ==", "Zm9v", "YmFy"];
+		let user_ids = vec![
+			UserId::Base64("Y2FmZQ==".to_owned()),
+			UserId::Base64("Zm9v".to_owned()),
+			UserId::Base64("YmFy".to_owned()),
+		];
 		run_detection_test(user_ids, ExternalIdEncoding::Base64);
 	}
 
 	#[tokio::test]
 	async fn test_mixed_ambiguous() {
 		// Some look hex, all look base64
-		let user_ids = vec!["cafebabe", "deadbeef", "beefcafe", "Y2FmZQ==", "Zm9v", "YmFy"];
+		let user_ids = vec![
+			UserId::Hex("cafebabe".to_owned()),
+			UserId::Hex("deadbeef".to_owned()),
+			UserId::Hex("beefcafe".to_owned()),
+			UserId::Base64("Y2FmZQ==".to_owned()),
+			UserId::Base64("Zm9v".to_owned()),
+			UserId::Base64("YmFy".to_owned()),
+		];
 		run_detection_test(user_ids, ExternalIdEncoding::Base64);
 	}
 
@@ -188,7 +234,11 @@ mod tests {
 		// "cafeb" length is 5, not divisible by 2 or 4, so neither hex nor base64
 		// "abc" length is 3, not divisible by 4, and 'c' is hex valid but odd length ->
 		// not hex.
-		let user_ids = vec!["cafe", "cafeb", "abc"];
+		let user_ids = vec![
+			UserId::Hex("cafe".to_owned()),
+			UserId::Plain("cafeb".to_owned()),
+			UserId::Plain("abc".to_owned()),
+		];
 		// "cafe" might count for both hex and base64, but "cafeb" and "abc" won't count
 		// for either. Out of 3, maybe 1 counts as hex/base64 and 2 are plain. Ratios:
 		// hex = 1/3 ≈ 0.33, base64 = 1/3 ≈ 0.33, both < 0.8.
@@ -199,7 +249,7 @@ mod tests {
 	async fn test_invalid_characters() {
 		// "zzz" is not hex. It's also not base64-safe (though 'z' is alphanumeric,
 		// length=3 %4!=0) "+++" is not hex and length=3 not multiple of 4 for base64.
-		let user_ids = vec!["zzz", "+++"];
+		let user_ids = vec![UserId::Plain("zzz".to_owned()), UserId::Plain("+++".to_owned())];
 		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
 
@@ -211,14 +261,18 @@ mod tests {
 		// - 3 plain (30%)
 		let user_ids = vec![
 			// Hex format users (30%)
-			"deadbeef", "cafebabe", "12345678",
+			UserId::Hex("deadbeef".to_owned()),
+			UserId::Hex("cafebabe".to_owned()),
+			UserId::Hex("12345678".to_owned()),
 			// Base64 format users (40%)
-			"Y2FmZQ==", // "cafe"
-			"Zm9vYmFy", // "foobar"
-			"aGVsbG8=", // "hello"
-			"d29ybGQ=", // "world"
+			UserId::Base64("Y2FmZQ==".to_owned()), // "cafe"
+			UserId::Base64("Zm9vYmFy".to_owned()), // "foobar"
+			UserId::Base64("aGVsbG8=".to_owned()), // "hello"
+			UserId::Base64("d29ybGQ=".to_owned()), // "world"
 			// Plain format users (30%)
-			"plain_1", "plain_2", "plain_3",
+			UserId::Plain("plain_1".to_owned()),
+			UserId::Plain("plain_2".to_owned()),
+			UserId::Plain("plain_3".to_owned()),
 		];
 
 		// Both hex (30%) and base64 (40%) > 20% threshold
@@ -232,8 +286,16 @@ mod tests {
 		// Testing near 90% threshold for hex
 		// 9 hex users and 1 plain = 90% exactly
 		let user_ids = vec![
-			"deadbeef", "cafebabe", "beefcafe", "12345678", "87654321", "abcdef12", "34567890",
-			"98765432", "fedcba98", "plain_id",
+			UserId::Hex("deadbeef".to_owned()),
+			UserId::Hex("cafebabe".to_owned()),
+			UserId::Hex("beefcafe".to_owned()),
+			UserId::Hex("12345678".to_owned()),
+			UserId::Hex("87654321".to_owned()),
+			UserId::Hex("abcdef12".to_owned()),
+			UserId::Hex("34567890".to_owned()),
+			UserId::Hex("98765432".to_owned()),
+			UserId::Hex("fedcba98".to_owned()),
+			UserId::Plain("plain_id".to_owned()),
 		];
 		// hex_ratio = 9/10 = 0.9
 		// Code requires > 0.9, not >=, so this should be Ambiguous
@@ -245,16 +307,16 @@ mod tests {
 		// Testing near 90% threshold for base64
 		// 9 base64 users and 1 plain = 90% exactly
 		let user_ids = vec![
-			"Y2FmZQ==", // cafe
-			"Zm9vYmFy", // foobar
-			"aGVsbG8=", // hello
-			"d29ybGQ=", // world
-			"dGVzdA==", // test
-			"YWJjZA==", // abcd
-			"eHl6Nzg=", // xyz78
-			"cXdlcnQ=", // qwert
-			"MTIzNDU=", // 12345
-			"plain_id",
+			UserId::Base64("Y2FmZQ==".to_owned()), // cafe
+			UserId::Base64("Zm9vYmFy".to_owned()), // foobar
+			UserId::Base64("aGVsbG8=".to_owned()), // hello
+			UserId::Base64("d29ybGQ=".to_owned()), // world
+			UserId::Base64("dGVzdA==".to_owned()), // test
+			UserId::Base64("YWJjZA==".to_owned()), // abcd
+			UserId::Base64("eHl6Nzg=".to_owned()), // xyz78
+			UserId::Base64("cXdlcnQ=".to_owned()), // qwert
+			UserId::Base64("MTIzNDU=".to_owned()), // 12345
+			UserId::Plain("plain_id".to_owned()),
 		];
 		// base64_ratio = 9/10 = 0.9
 		// Code requires > 0.9, not >=, so this should be Ambiguous
@@ -265,7 +327,11 @@ mod tests {
 	async fn test_empty_ids() {
 		// Empty IDs should be skipped. Only one non-empty user which is hex.
 		// hex_count=1, total=1 => ratio=1.0 > 0.8 => Hex
-		let user_ids = vec!["", "", "cafebabe"];
+		let user_ids = vec![
+			UserId::Plain("".to_owned()),
+			UserId::Plain("".to_owned()),
+			UserId::Hex("cafebabe".to_owned()),
+		];
 		run_detection_test(user_ids, ExternalIdEncoding::Hex);
 	}
 
@@ -275,14 +341,14 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_conversion_hex_to_hex() {
-		let original_id = "deadbeef";
+		let original_id = UserId::Hex("deadbeef".to_owned());
 		// Expected hex, no changes should be made.
 		run_conversion_test(original_id, ExternalIdEncoding::Hex, "deadbeef");
 	}
 
 	#[tokio::test]
 	async fn test_conversion_base64_to_hex() {
-		let original_id = "Y2FmZQ=="; // "cafe"
+		let original_id = UserId::Base64("Y2FmZQ==".to_owned()); // "cafe"
 
 		// Expected base64, we decode base64 => "cafe" and then hex encode the bytes of
 		// "cafe". "cafe" as ASCII: 0x63 0x61 0x66 0x65 in hex is "63616665"
@@ -291,7 +357,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_conversion_plain_to_hex() {
-		let original_id = "plain_id";
+		let original_id = UserId::Plain("plain_id".to_owned());
 		// Expected plain without encoding, so just hex-encode the ASCII.
 		// 'p' = 0x70, 'l' = 0x6c, 'a' = 0x61, 'i' = 0x69, 'n' = 0x6e, '_'=0x5f,
 		// 'i'=0x69, 'd'=0x64 => "706c61696e5f6964"
@@ -307,9 +373,9 @@ mod tests {
 			"email@example.com".to_owned(),
 			None,
 			true,
-			None,
-			"Y2FmZQ==".to_owned(),             // base64 encoded external ID
-			Some("test.localpart".to_owned()), // localpart should be preserved
+			"Example User".to_owned(),
+			"Y2FmZQ==".to_owned(),       // base64 encoded external ID
+			"test.localpart".to_owned(), // localpart should be preserved
 		);
 
 		let migrated_user = original_user
@@ -319,6 +385,6 @@ mod tests {
 		// External ID should be converted from base64 to hex
 		assert_eq!(migrated_user.get_external_id(), hex::encode("cafe"));
 		// Localpart should remain unchanged
-		assert_eq!(migrated_user.get_localpart(), Some("test.localpart"));
+		assert_eq!(migrated_user.get_localpart(), "test.localpart");
 	}
 }

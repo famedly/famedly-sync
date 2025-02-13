@@ -2,7 +2,7 @@
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use user::User;
-use zitadel::Zitadel;
+use zitadel::{Zitadel, ZitadelUserBuilder};
 
 mod config;
 mod sources;
@@ -22,29 +22,41 @@ use sources::{csv::CsvSource, ldap::LdapSource, ukt::UktSource, Source};
 // TODO: If async closures become a reality, this should be factored
 // into the `zitadel::search_result_to_user` function
 pub async fn get_next_zitadel_user(
-	stream: &mut (impl Stream<Item = Result<(User, String)>> + Send + Unpin),
+	stream: &mut (impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send + Unpin),
 	zitadel: &mut Zitadel,
 ) -> Result<Option<(User, String)>> {
 	match stream.next().await.transpose()? {
-		Some(mut zitadel_user) => {
-			let preferred_username = zitadel
+		Some((zitadel_user, id)) => {
+			let Some(localpart) = zitadel
 				.zitadel_client
-				.get_user_metadata(&zitadel_user.1, "preferred_username")
+				.get_user_metadata(&id, "localpart")
 				.await
 				.ok()
-				.and_then(|metadata| metadata.metadata().value());
+				.and_then(|metadata| metadata.metadata().value())
+			else {
+				tracing::warn!("Zitadel user without a valid localpart: {}", id);
+				return Box::pin(get_next_zitadel_user(stream, zitadel)).await;
+			};
 
-			let localpart = zitadel
+			let Some(preferred_username) = zitadel
 				.zitadel_client
-				.get_user_metadata(&zitadel_user.1, "localpart")
+				.get_user_metadata(&id, "preferred_username")
 				.await
 				.ok()
-				.and_then(|metadata| metadata.metadata().value());
+				.and_then(|metadata| metadata.metadata().value())
+			else {
+				tracing::warn!("Zitadel user without a preferred username: {}", id);
+				return Box::pin(get_next_zitadel_user(stream, zitadel)).await;
+			};
 
-			zitadel_user.0.preferred_username = preferred_username;
-			zitadel_user.0.localpart = localpart;
+			// We've supplied the required data, so this should never
+			// error in practice; if it does, that's a bug
+			let user = zitadel_user
+				.with_localpart(localpart)
+				.with_preferred_username(preferred_username)
+				.build()?;
 
-			Ok(Some(zitadel_user))
+			Ok(Some((user, id)))
 		}
 		None => Ok(None),
 	}

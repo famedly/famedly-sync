@@ -8,7 +8,7 @@ use csv::Reader;
 use serde::Deserialize;
 
 use super::Source;
-use crate::user::User;
+use crate::user::{self, User};
 
 /// CSV Source
 pub struct CsvSource {
@@ -76,15 +76,21 @@ struct CsvData {
 impl CsvData {
 	/// Convert CsvData to User data
 	fn to_user(csv_data: CsvData) -> User {
+		let localpart = if csv_data.localpart.is_empty() {
+			user::compute_famedly_uuid(csv_data.email.as_bytes())
+		} else {
+			csv_data.localpart
+		};
+
 		User {
 			email: csv_data.email.clone(),
 			first_name: csv_data.first_name,
 			last_name: csv_data.last_name,
 			phone: if csv_data.phone.is_empty() { None } else { Some(csv_data.phone) },
-			preferred_username: Some(csv_data.email.clone()),
+			preferred_username: csv_data.email.clone(),
 			external_user_id: hex::encode(csv_data.email),
 			enabled: true,
-			localpart: (!csv_data.localpart.is_empty()).then_some(csv_data.localpart),
+			localpart,
 		}
 	}
 }
@@ -168,11 +174,7 @@ mod tests {
 			hex::encode("john.doe@example.com".as_bytes()),
 			"Unexpected external_user_id at index 0"
 		);
-		assert_eq!(
-			users[0].localpart,
-			Some("john.doe".to_owned()),
-			"Unexpected localpart at index 0"
-		);
+		assert_eq!(users[0].localpart, "john.doe".to_owned(), "Unexpected localpart at index 0");
 
 		// Test user without localpart (empty string)
 		assert_eq!(users[1].email, "jane.smith@example.com", "Unexpected email at index 1");
@@ -181,7 +183,11 @@ mod tests {
 			hex::encode("jane.smith@example.com".as_bytes()),
 			"Unexpected external_user_id at index 1"
 		);
-		assert_eq!(users[1].localpart, None, "Unexpected localpart at index 1");
+		assert_eq!(
+			users[1].localpart,
+			user::compute_famedly_uuid("jane.smith@example.com".as_bytes()),
+			"Unexpected localpart at index 1"
+		);
 
 		// Test user with localpart but no phone
 		assert_eq!(users[2].email, "alice.johnson@example.com", "Unexpected email at index 2");
@@ -192,7 +198,7 @@ mod tests {
 		);
 		assert_eq!(
 			users[2].localpart,
-			Some("alice.johnson".to_owned()),
+			"alice.johnson".to_owned(),
 			"Unexpected localpart at index 2"
 		);
 		assert_eq!(users[2].phone, None, "Unexpected phone at index 2");
@@ -204,7 +210,11 @@ mod tests {
 			hex::encode("bob.williams@example.com".as_bytes()),
 			"Unexpected external_user_id at index 3"
 		);
-		assert_eq!(users[3].localpart, None, "Unexpected localpart at index 3");
+		assert_eq!(
+			users[3].localpart,
+			user::compute_famedly_uuid("bob.williams@example.com".as_bytes()),
+			"Unexpected localpart at index 3"
+		);
 		assert_eq!(users[3].phone, Some("+4444444444".to_owned()), "Unexpected phone at index 3");
 	}
 
@@ -287,11 +297,7 @@ mod tests {
 			hex::encode("jane.smith@example.com".as_bytes()),
 			"Unexpected external_user_id at index 0"
 		);
-		assert_eq!(
-			users[0].localpart,
-			Some("jane.smith".to_owned()),
-			"Unexpected localpart at index 0"
-		);
+		assert_eq!(users[0].localpart, "jane.smith".to_owned(), "Unexpected localpart at index 0");
 	}
 
 	#[test]
@@ -315,7 +321,7 @@ mod tests {
 		assert_eq!(users.len(), 2, "Unexpected number of users");
 		// All users should have None localpart
 		assert!(
-			users.iter().all(|u| u.localpart.is_none()),
+			users.iter().all(|u| u.localpart == user::compute_famedly_uuid(u.email.as_bytes())),
 			"Expected all users to have None localpart"
 		);
 	}

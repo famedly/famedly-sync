@@ -506,6 +506,50 @@ async fn test_e2e_sync_deletion() {
 
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
+async fn test_e2e_user_no_localpart_skipped() {
+	let config = ldap_config().await.clone();
+
+	// Prepare Zitadel client
+	let zitadel = open_zitadel_connection().await;
+
+	// Create user in Zitadel
+	let user = ImportHumanUserRequest {
+		user_name: "maxmustermann".to_owned(),
+		profile: Some(Profile {
+			first_name: "Test".to_owned(),
+			last_name: "User".to_owned(),
+			display_name: "User, Test".to_owned(),
+			gender: Gender::Unspecified.into(),
+			nick_name: "deadbeef".to_owned(),
+			preferred_language: String::default(),
+		}),
+		email: Some(Email { email: "max@mustermann.de".to_owned(), is_email_verified: true }),
+		phone: Some(Phone { phone: "+12345678901".to_owned(), is_phone_verified: true }),
+		password: String::default(),
+		hashed_password: None,
+		password_change_required: false,
+		request_passwordless_registration: false,
+		otp_code: String::default(),
+		idps: vec![],
+	};
+
+	zitadel
+		.create_human_user(&config.zitadel.organization_id, user)
+		.await
+		.expect("Failed to create user");
+
+	// Explicitly do not set a localpart for this user
+
+	perform_sync(&config).await.expect("syncing failed");
+	zitadel
+		.get_user_by_login_name("maxmustermann")
+		.await
+		.expect("user query failed")
+		.expect("user should not have been deleted");
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
 async fn test_e2e_ldaps() {
 	let mut config = ldap_config().await.clone();
 	config
@@ -1172,10 +1216,30 @@ async fn test_e2e_ukt_sync() {
 	};
 
 	let zitadel = open_zitadel_connection().await;
-	zitadel
+	let user = zitadel
 		.create_human_user(&config.zitadel.organization_id, user)
 		.await
 		.expect("failed to create user");
+
+	zitadel
+		.set_user_metadata(
+			Some(&config.zitadel.organization_id),
+			user.clone(),
+			"localpart".to_owned(),
+			"irrelevant",
+		)
+		.await
+		.expect("Failed to set user localpart");
+
+	zitadel
+		.set_user_metadata(
+			Some(&config.zitadel.organization_id),
+			user.clone(),
+			"preferred_username".to_owned(),
+			"irrelevant",
+		)
+		.await
+		.expect("Failed to set user preferred name");
 
 	let user = zitadel
 		.get_user_by_login_name("delete_me@famedly.de")
@@ -1602,6 +1666,26 @@ async fn test_e2e_migrate_ambiguous_id_as_base64() {
 		.await
 		.expect("Failed to create user");
 
+	zitadel
+		.set_user_metadata(
+			Some(&config.zitadel.organization_id),
+			temp_user.clone(),
+			"localpart".to_owned(),
+			"irrelevant",
+		)
+		.await
+		.expect("Failed to set user localpart");
+
+	zitadel
+		.set_user_metadata(
+			Some(&config.zitadel.organization_id),
+			temp_user.clone(),
+			"preferred_username".to_owned(),
+			"irrelevant",
+		)
+		.await
+		.expect("Failed to set user preferred name");
+
 	let user_name = "ambiguous_user_two";
 
 	// "beefcafe" appears both as a valid hex and base64
@@ -1855,10 +1939,30 @@ async fn run_migration_test(
 		idps: vec![],
 	};
 
-	zitadel
+	let user_id = zitadel
 		.create_human_user(&config.zitadel.organization_id, user)
 		.await
 		.expect("Failed to create user");
+
+	zitadel
+		.set_user_metadata(
+			Some(&config.zitadel.organization_id),
+			user_id.clone(),
+			"localpart".to_owned(),
+			"irrelevant",
+		)
+		.await
+		.expect("Failed to set user localpart");
+
+	zitadel
+		.set_user_metadata(
+			Some(&config.zitadel.organization_id),
+			user_id,
+			"preferred_username".to_owned(),
+			"irrelevant",
+		)
+		.await
+		.expect("Failed to set user preferred name");
 
 	// Run migration
 	run_migration_binary(config.feature_flags.contains(&FeatureFlag::DryRun));
