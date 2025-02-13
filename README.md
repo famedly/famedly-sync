@@ -41,6 +41,26 @@ Config can have **various sources** to sync from. When a source is configured, t
 
 **Feature flags** are optional and can be used to enable or disable certain features.
 
+## Migrations
+
+`famedly-sync` v0.8.0 changed the user ID schema, and therefore
+requires a migration step. For this, a `migrate` binary was added,
+which reads the same configuration file as the main `famedly-sync`
+binary, and simply performs the migration as needed.
+
+
+Starting with v0.9.1-rc1, the binary is also included in the docker
+image, under `/usr/local/bin/migrate`. Due to how the image is set up,
+using this binary requires setting the container entrypoint to that
+file.
+
+To confirm successful migration, look at any user and confirm that the
+`Nickname` field was updated to be a hex-encoded string, rather than a
+base64-encoded one. No other values should change during migration.
+
+A Zitadel instance that is already using hex-encoded IDs will not be
+altered (though famedly-sync will still make various HTTP calls).
+
 ## Testing & Development
 
 This repository uses [`nextest`](https://nexte.st/) to perform test
