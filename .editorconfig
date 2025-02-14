@@ -23,3 +23,8 @@ indent_size = 2
 
 [*.ldif]
 insert_final_newline = false
+
+[*.nix]
+# Using nixpkgs' - very opinionated - formatter's rules
+indent_size = 2
+indent_style = space
