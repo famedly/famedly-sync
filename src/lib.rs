@@ -1,5 +1,5 @@
 //! Sync tool between other sources and our infrastructure based on Zitadel.
-use anyhow::{Context, Result};
+use anyhow::{Context as AnyhowContext, Result};
 use futures::{Stream, StreamExt};
 use user::User;
 use zitadel::{Zitadel, ZitadelUserBuilder};
@@ -126,7 +126,7 @@ async fn disable_users(config: &Config, users: &mut VecDeque<User>) -> Result<()
 	users.retain(|user| !user.enabled);
 
 	let mut zitadel = Zitadel::new(config).await?;
-	let mut stream = zitadel.list_users()?;
+	let mut stream = zitadel.list_users().await?;
 
 	while let Some(zitadel_user) = get_next_zitadel_user(&mut stream, &mut zitadel).await? {
 		if users.front().map(|user| user.external_user_id.clone())
@@ -147,7 +147,7 @@ async fn sync_users(config: &Config, sync_users: &mut VecDeque<User>) -> Result<
 	sync_users.retain(|user| user.enabled);
 
 	let mut zitadel = Zitadel::new(config).await?;
-	let mut stream = zitadel.list_users()?;
+	let mut stream = zitadel.list_users().await?;
 
 	let mut source_user = sync_users.pop_front();
 	let mut zitadel_user = get_next_zitadel_user(&mut stream, &mut zitadel).await?;

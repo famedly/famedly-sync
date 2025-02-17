@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 	let encoding = detect_database_encoding(users_sample);
 
 	// Get a stream of all users
-	let mut stream = zitadel.list_users()?;
+	let mut stream = zitadel.list_users().await?;
 
 	// Process each user
 	while let Some((user, zitadel_id)) = get_next_zitadel_user(&mut stream, &mut zitadel).await? {

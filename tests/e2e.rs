@@ -2034,7 +2034,7 @@ fn run_migration_binary(is_dry_run: bool) {
 
 async fn cleanup_test_users(config: &Config) {
 	let mut zitadel = SyncZitadel::new(config).await.expect("failed to set up Zitadel client");
-	let mut stream = zitadel.list_users().expect("failed to list users");
+	let mut stream = zitadel.list_users().await.expect("failed to list users");
 
 	while let Some(zitadel_user) =
 		get_next_zitadel_user(&mut stream, &mut zitadel).await.expect("failed to get next user")

@@ -3,16 +3,21 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use zitadel_rust_client::{
 	v1::Zitadel as ZitadelClientV1,
 	v2::{
+		management::{
+			Userv1Type, V1UserGrantProjectIdQuery, V1UserGrantQuery, V1UserGrantRoleKeyQuery,
+			V1UserGrantUserTypeQuery, Zitadeluserv1UserGrant,
+		},
 		users::{
-			AddHumanUserRequest, IdpLink, InUserEmailsQuery, ListUsersRequest, Organization,
-			SearchQuery, SetHumanEmail, SetHumanPhone, SetHumanProfile, SetMetadataEntry,
-			TypeQuery, UpdateHumanUserRequest, User as ZitadelUser, UserFieldName, Userv2Type,
+			AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, ListUsersRequest,
+			Organization, OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone,
+			SetHumanProfile, SetMetadataEntry, TypeQuery, UpdateHumanUserRequest,
+			User as ZitadelUser, UserFieldName, Userv2Type,
 		},
 		Zitadel as ZitadelClient,
 	},
@@ -92,14 +97,19 @@ impl Zitadel {
 	}
 
 	/// Return a stream of Zitadel users
-	pub fn list_users(
+	pub fn list_all_users(
 		&mut self,
 	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
 		self.zitadel_client
 			.list_users(
-				ListUsersRequest::new(vec![
-					SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))
-				])
+				ListUsersRequest::new(vec![SearchQuery::new().with_and_query(
+					AndQuery::new().with_queries(vec![
+						SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human)),
+						SearchQuery::new().with_organization_id_query(OrganizationIdQuery::new(
+							self.zitadel_config.organization_id.clone(),
+						)),
+					]),
+				)])
 				.with_asc(true)
 				.with_sorting_column(UserFieldName::NickName),
 			)
@@ -110,6 +120,54 @@ impl Zitadel {
 					Ok((user, id))
 				})
 			})
+	}
+
+	/// Uses "Search User Grants" method to fetch users. Since it doesn't
+	/// support sorting, we read all the users into the memory and sort them,
+	/// so this function is computation intensive. TODO: make an issue to
+	/// zitadel to support sorting
+	pub async fn list_users_with_project_id_filtering(
+		&mut self,
+	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
+		let all_users = self
+			.zitadel_client
+			.search_user_grants(
+				Some(self.zitadel_config.organization_id.clone()),
+				Some(vec![
+					V1UserGrantQuery::ProjectId {
+						project_id_query: (V1UserGrantProjectIdQuery::new()
+							.with_project_id(self.zitadel_config.project_id.clone())),
+					},
+					V1UserGrantQuery::UserType {
+						user_type_query: V1UserGrantUserTypeQuery::new()
+							.with__type(Userv1Type::Human),
+					},
+					V1UserGrantQuery::RoleKey {
+						role_key_query: V1UserGrantRoleKeyQuery::new().with_role_key("User".into()),
+					},
+				]),
+			)?
+			.map(|user| {
+				let id = user.user_id().context("Missing Zitadel user ID")?.clone();
+				let user = ZitadelUserBuilder::try_from(user)
+					.map_err(|f| anyhow!("Missing {f} in Zitadel user"))?;
+				Ok::<_, anyhow::Error>((user.external_user_id.clone(), (user, id)))
+			})
+			.try_collect::<std::collections::BTreeMap<String, _>>()
+			.await?;
+		Ok(futures::stream::iter(all_users.into_values().map(Ok)))
+	}
+
+	/// Wrapper over two different methods to fetch users depending on the
+	/// configuration.
+	pub async fn list_users(
+		&mut self,
+	) -> Result<Box<dyn Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send + Unpin>> {
+		Ok(if self.zitadel_config.filter_by_project_id {
+			Box::new(self.list_users_with_project_id_filtering().await?)
+		} else {
+			Box::new(self.list_all_users()?)
+		})
 	}
 
 	/// Return a vector of a random sample of Zitadel users
@@ -370,6 +428,19 @@ pub fn search_result_to_user(user: ZitadelUser) -> Result<ZitadelUserBuilder> {
 	Ok(user)
 }
 
+impl TryFrom<Zitadeluserv1UserGrant> for ZitadelUserBuilder {
+	type Error = &'static str;
+	fn try_from(user: Zitadeluserv1UserGrant) -> Result<Self, Self::Error> {
+		Ok(ZitadelUserBuilder::new(
+			user.first_name().ok_or("first_name")?.clone(),
+			user.last_name().ok_or("last_name")?.clone(),
+			user.email().ok_or("email")?.clone(),
+			user.user_name().ok_or("user_name")?.clone(),
+			None, // TODO: think of something
+		))
+	}
+}
+
 /// A builder for a `User` to be used for users gathered from Zitadel
 #[derive(Debug)]
 pub struct ZitadelUserBuilder {
@@ -481,4 +552,9 @@ pub struct ZitadelConfig {
 	pub project_id: String,
 	/// IDP ID provided by Famedly Zitadel
 	pub idp_id: String,
+	/// Enable this only if your service user's permissions aren't specific
+	/// enough, or if there are manually created users in the project.
+	/// Computation intensive, may struggle or fail with large number of users.
+	#[serde(default)]
+	pub filter_by_project_id: bool,
 }
