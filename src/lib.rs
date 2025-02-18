@@ -9,7 +9,7 @@ mod sources;
 pub mod user;
 pub mod zitadel;
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, pin::pin};
 
 pub use config::{Config, FeatureFlag, LdapSourceConfig};
 pub use sources::{
@@ -126,7 +126,7 @@ async fn disable_users(config: &Config, users: &mut VecDeque<User>) -> Result<()
 	users.retain(|user| !user.enabled);
 
 	let mut zitadel = Zitadel::new(config).await?;
-	let mut stream = zitadel.list_users()?;
+	let mut stream = pin!(zitadel.list_users()?);
 
 	while let Some(zitadel_user) = get_next_zitadel_user(&mut stream, &mut zitadel).await? {
 		if users.front().map(|user| user.external_user_id.clone())
@@ -147,7 +147,7 @@ async fn sync_users(config: &Config, sync_users: &mut VecDeque<User>) -> Result<
 	sync_users.retain(|user| user.enabled);
 
 	let mut zitadel = Zitadel::new(config).await?;
-	let mut stream = zitadel.list_users()?;
+	let mut stream = pin!(zitadel.list_users()?);
 
 	let mut source_user = sync_users.pop_front();
 	let mut zitadel_user = get_next_zitadel_user(&mut stream, &mut zitadel).await?;

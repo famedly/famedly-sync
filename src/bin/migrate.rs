@@ -1,5 +1,5 @@
 //! This binary is used to migrate user IDs from base64 to hex encoding.
-use std::{path::Path, str::FromStr};
+use std::{path::Path, pin::pin, str::FromStr};
 
 use anyhow::{Context, Result};
 use famedly_sync::{
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 	let encoding = detect_database_encoding(users_sample);
 
 	// Get a stream of all users
-	let mut stream = zitadel.list_users()?;
+	let mut stream = pin!(zitadel.list_users()?);
 
 	// Process each user
 	while let Some((user, zitadel_id)) = get_next_zitadel_user(&mut stream, &mut zitadel).await? {

@@ -133,7 +133,7 @@ configuration file:
 opt
 ├── certs
 │  └── test-ldap.crt   # The TLS certificate of the LDAP server
-├── config.yaml        # An example can be found in config.sample.yaml
+├── config.yaml        # Example configs can be found in [./sample-configs](./sample-configs)
 └── service-user.json  # Provided by famedly
 ```
 

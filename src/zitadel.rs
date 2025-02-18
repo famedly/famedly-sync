@@ -3,16 +3,22 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use zitadel_rust_client::{
 	v1::Zitadel as ZitadelClientV1,
 	v2::{
+		management::{
+			V1UserGrantProjectIdQuery, V1UserGrantQuery, V1UserGrantRoleKeyQuery,
+			V1UserGrantUserIdQuery,
+		},
+		pagination::PaginationParams,
 		users::{
-			AddHumanUserRequest, IdpLink, InUserEmailsQuery, ListUsersRequest, Organization,
-			SearchQuery, SetHumanEmail, SetHumanPhone, SetHumanProfile, SetMetadataEntry,
-			TypeQuery, UpdateHumanUserRequest, User as ZitadelUser, UserFieldName, Userv2Type,
+			AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, ListUsersRequest,
+			Organization, OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone,
+			SetHumanProfile, SetMetadataEntry, TypeQuery, UpdateHumanUserRequest,
+			User as ZitadelUser, UserFieldName, Userv2Type,
 		},
 		Zitadel as ZitadelClient,
 	},
@@ -95,21 +101,57 @@ impl Zitadel {
 	pub fn list_users(
 		&mut self,
 	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
-		self.zitadel_client
+		let zitadel = self.zitadel_client.clone();
+		let org_id = self.zitadel_config.organization_id.clone();
+		let project_id = self.zitadel_config.project_id.clone();
+		Ok(self
+			.zitadel_client
 			.list_users(
-				ListUsersRequest::new(vec![
-					SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))
-				])
+				ListUsersRequest::new(vec![SearchQuery::new().with_and_query(
+					AndQuery::new().with_queries(vec![
+						SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human)),
+						SearchQuery::new().with_organization_id_query(OrganizationIdQuery::new(
+							self.zitadel_config.organization_id.clone(),
+						)),
+					]),
+				)])
 				.with_asc(true)
 				.with_sorting_column(UserFieldName::NickName),
-			)
-			.map(|stream| {
-				stream.map(|user| {
-					let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
-					let user = search_result_to_user(user)?;
-					Ok((user, id))
-				})
+			)?
+			.map(|user| {
+				let id = user.user_id().context("Missing Zitadel user ID")?.clone();
+				let user = search_result_to_user(user)?;
+				Ok((user, id))
 			})
+			.try_filter_map(move |(user, user_id)| {
+				let org_id = org_id.clone();
+				let zitadel = zitadel.clone();
+				let project_id = project_id.clone();
+				async move {
+					let grant = zitadel
+						.search_user_grants(
+							Some(org_id),
+							Some(PaginationParams::default().with_page_size(1)),
+							Some(vec![
+								V1UserGrantQuery::ProjectId {
+									project_id_query: (V1UserGrantProjectIdQuery::new()
+										.with_project_id(project_id)),
+								},
+								V1UserGrantQuery::RoleKey {
+									role_key_query: V1UserGrantRoleKeyQuery::new()
+										.with_role_key("User".into()),
+								},
+								V1UserGrantQuery::UserId {
+									user_id_query: V1UserGrantUserIdQuery::new()
+										.with_user_id(user_id.clone()),
+								},
+							]),
+						)?
+						.next()
+						.await;
+					Ok(grant.is_some().then_some((user, user_id)))
+				}
+			}))
 	}
 
 	/// Return a vector of a random sample of Zitadel users

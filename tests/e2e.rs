@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 /// E2E integration tests
-use std::{collections::HashSet, path::Path, time::Duration};
+use std::{collections::HashSet, path::Path, pin::pin, time::Duration};
 
 use base64::{engine::general_purpose, Engine as _};
 use famedly_sync::{
@@ -1957,12 +1957,23 @@ async fn run_migration_test(
 	zitadel
 		.set_user_metadata(
 			Some(&config.zitadel.organization_id),
-			user_id,
+			user_id.clone(),
 			"preferred_username".to_owned(),
 			"irrelevant",
 		)
 		.await
 		.expect("Failed to set user preferred name");
+
+	zitadel
+		.add_user_grant(
+			Some(config.zitadel.organization_id.clone()),
+			user_id,
+			config.zitadel.project_id.clone(),
+			None,
+			vec![FAMEDLY_USER_ROLE.to_owned()],
+		)
+		.await
+		.expect("Failed to create user grant");
 
 	// Run migration
 	run_migration_binary(config.feature_flags.contains(&FeatureFlag::DryRun));
@@ -2034,7 +2045,7 @@ fn run_migration_binary(is_dry_run: bool) {
 
 async fn cleanup_test_users(config: &Config) {
 	let mut zitadel = SyncZitadel::new(config).await.expect("failed to set up Zitadel client");
-	let mut stream = zitadel.list_users().expect("failed to list users");
+	let mut stream = pin!(zitadel.list_users().expect("failed to list users"));
 
 	while let Some(zitadel_user) =
 		get_next_zitadel_user(&mut stream, &mut zitadel).await.expect("failed to get next user")
