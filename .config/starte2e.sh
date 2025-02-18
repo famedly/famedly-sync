@@ -20,4 +20,5 @@ fi
 
 # Shut down any still running test-setup first
 docker compose --project-directory ./tests/environment down -v test-setup $ldap_down || true
-docker compose --project-directory ./tests/environment up --wait
+docker compose --project-directory ./tests/environment up --wait \
+	|| (docker compose --project-directory ./tests/environment logs test-setup; exit 1)

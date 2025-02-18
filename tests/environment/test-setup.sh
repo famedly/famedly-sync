@@ -6,6 +6,7 @@ set -eu
 # data and then to do some basic initialization.
 #
 # This is intended for test suite setup, don't use this in production.
+log() { echo "$@" 1>&2; }
 
 LDAP_HOST='ldap://ldap:1389'
 LDAP_BASE='dc=example,dc=org'
@@ -14,7 +15,7 @@ LDAP_PASSWORD='adminpassword'
 
 ZITADEL_HOST="http://zitadel:8080"
 
-echo "Waiting for LDAP to be ready"
+log "Waiting for LDAP to be ready"
 
 retries=5
 
@@ -27,9 +28,10 @@ while [ $retries -gt 0 ]; do
 	fi
 done
 
-echo "Authenticating to Zitadel"
+log "Authenticating to Zitadel"
 zitadel-tools key2jwt --audience="http://localhost" --key=/environment/zitadel/service-user.json --output=/tmp/jwt.txt
-zitadel_token="$(curl -s \
+zitadel_token="$(curl -sS \
+	--fail-with-body \
 	--request POST \
 	--url "${ZITADEL_HOST}/oauth/v2/token" \
 	--header 'Content-Type: application/x-www-form-urlencoded' \
@@ -46,39 +48,40 @@ zitadel_request() {
 
 	shift 2
 
-	curl -s \
+	curl -sS \
+		--fail-with-body \
 		--request "$_request_type" \
 		--url "${ZITADEL_HOST}/${_path}" \
 		--header 'Host: localhost' \
 		--header "Authorization: Bearer ${zitadel_token}" \
-		"$@"
+		"$@" || exit 1
 }
 
-echo "Deleting Zitadel users"
+log "Deleting Zitadel users"
 zitadel_users="$(zitadel_request management/v1/users/_search POST)"
 # Filter out the admin users
 zitadel_users="$(echo "$zitadel_users" | jq --raw-output '.result[]? | select(.userName | startswith("zitadel-admin") | not) | .id')"
 
 for id in $zitadel_users; do
-	echo "Deleting user $id"
+	log "Deleting user $id"
 	zitadel_request "management/v1/users/$id" DELETE
 done
 
-echo "Deleting Zitadel projects"
+log "Deleting Zitadel projects"
 projects="$(zitadel_request 'management/v1/projects/_search' POST)"
 # Filter out the ZITADEL project
 projects="$(echo "$projects" | jq --raw-output '.result[]? | select(.name == "ZITADEL" | not) | .id')"
 
 for id in $projects; do
-	echo "Deleting project $id"
+	log "Deleting project $id"
 	zitadel_request "management/v1/projects/$id" DELETE
 done
 
-echo "Creating test project"
+log "Creating test project"
 project_id="$(zitadel_request 'management/v1/projects' POST --data '{"name": "TestProject"}' | jq --raw-output '.id')"
 zitadel_request "management/v1/projects/$project_id/roles" POST --data '{"roleKey": "User", "displayName": "User"}'
 
-echo "Setting up ldap IDP"
+log "Setting up ldap IDP"
 idp_id="$(zitadel_request 'management/v1/idps/ldap' POST --json @- <<EOF | jq --raw-output '.id'
 {
     "name": "ldap",
@@ -100,23 +103,24 @@ idp_id="$(zitadel_request 'management/v1/idps/ldap' POST --json @- <<EOF | jq --
 EOF
 )"
 
-echo "Updating Zitadel IDs"
+log "Updating Zitadel IDs"
 org_id="$(zitadel_request 'management/v1/orgs/me' GET | jq --raw-output '.org.id')"
 
-sed "s/@ORGANIZATION_ID@/$org_id/" /config.template.yaml > /environment/config.yaml
-sed "s/@PROJECT_ID@/$project_id/" -i /environment/config.yaml
-sed "s/@IDP_ID@/$idp_id/" -i /environment/config.yaml
+sed "s/ORGANIZATION_ID/$org_id/;
+     s/PROJECT_ID/$project_id/;
+     s/IDP_ID/$idp_id/;
+    " /config.template.yaml > /environment/config.yaml
 
-echo "Deleting LDAP test data"
+log "Deleting LDAP test data"
 ldapdelete -D "${LDAP_ADMIN}" -w "${LDAP_PASSWORD}" -H "${LDAP_HOST}" -r "ou=testorg,${LDAP_BASE}" || true
 
-echo "Add LDAP test organization"
+log "Add LDAP test organization"
 ldapadd -D "${LDAP_ADMIN}" -w "${LDAP_PASSWORD}" -H "${LDAP_HOST}" -f /environment/ldap/testorg.ldif
 
-echo "Current LDAP test org data:"
+log "Current LDAP test org data:"
 ldapsearch -D "${LDAP_ADMIN}" -w "${LDAP_PASSWORD}" -H "${LDAP_HOST}" -b "ou=testorg,${LDAP_BASE}" "objectclass=*"
 
-echo "Current Zitadel org users:"
+log "Current Zitadel org users:"
 zitadel_request management/v1/users/_search POST | jq .result
 
 # Signify that the script has completed
