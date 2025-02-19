@@ -502,6 +502,10 @@ async fn test_e2e_sync_deletion() {
 
 	let user = zitadel.get_user_by_login_name("deleted@famedly.de").await;
 	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+
+	assert!(zitadel.get_user_by_login_name("another_user@example.test").await.is_ok());
+	assert!(zitadel.get_user_by_login_name("projectless_user@example.test").await.is_ok());
+	assert!(zitadel.get_user_by_login_name("another_org_user@example.test").await.is_ok());
 }
 
 #[test(tokio::test)]
