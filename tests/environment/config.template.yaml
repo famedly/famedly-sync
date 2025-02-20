@@ -1,9 +1,9 @@
 zitadel:
   url: http://localhost:8080
   key_file: tests/environment/zitadel/service-user.json
-  organization_id: @ORGANIZATION_ID@
-  project_id: @PROJECT_ID@
-  idp_id: @IDP_ID@
+  organization_id: <ORGANIZATION_ID>
+  project_id: <PROJECT_ID>
+  idp_id: <IDP_ID>
 
 feature_flags:
   - sso_login
