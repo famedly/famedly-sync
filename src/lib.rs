@@ -111,7 +111,7 @@ pub async fn perform_sync(config: &Config) -> Result<()> {
 /// Delete a list of users given their email addresses
 async fn delete_users_by_email(config: &Config, emails: Vec<String>) -> Result<()> {
 	let mut zitadel = Zitadel::new(config).await?;
-	let mut stream = zitadel.get_users_by_email(emails)?;
+	let mut stream = pin!(zitadel.get_users_by_email(emails)?);
 
 	while let Some(zitadel_user) = get_next_zitadel_user(&mut stream, &mut zitadel).await? {
 		zitadel.delete_user(&zitadel_user.1).await?;

@@ -1,5 +1,5 @@
 //! Helper functions for submitting data to Zitadel
-use std::path::PathBuf;
+use std::{path::PathBuf, pin::pin};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
@@ -15,10 +15,10 @@ use zitadel_rust_client::{
 		},
 		pagination::PaginationParams,
 		users::{
-			AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, ListUsersRequest,
-			Organization, OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone,
-			SetHumanProfile, SetMetadataEntry, TypeQuery, UpdateHumanUserRequest,
-			User as ZitadelUser, UserFieldName, Userv2Type,
+			AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, Organization,
+			OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone, SetHumanProfile,
+			SetMetadataEntry, TypeQuery, UpdateHumanUserRequest, User as ZitadelUser,
+			UserFieldName, Userv2Type,
 		},
 		Zitadel as ZitadelClient,
 	},
@@ -77,24 +77,23 @@ impl Zitadel {
 		&mut self,
 		emails: Vec<String>,
 	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
-		self.zitadel_client
+		Ok(self
+			.zitadel_client
 			.list_users(
-				ListUsersRequest::new(vec![
+				Some(PaginationParams::DEFAULT.with_asc(true)),
+				Some(UserFieldName::NickName),
+				Some(vec![
 					SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human)),
 					SearchQuery::new().with_in_user_emails_query(
 						InUserEmailsQuery::new().with_user_emails(emails),
 					),
-				])
-				.with_asc(true)
-				.with_sorting_column(UserFieldName::NickName),
-			)
-			.map(|stream| {
-				stream.map(|user| {
-					let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
-					let user = search_result_to_user(user)?;
-					Ok((user, id))
-				})
-			})
+				]),
+			)?
+			.and_then(|user| async {
+				let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
+				let user = search_result_to_user(user)?;
+				Ok((user, id))
+			}))
 	}
 
 	/// Return a stream of Zitadel users
@@ -107,18 +106,16 @@ impl Zitadel {
 		Ok(self
 			.zitadel_client
 			.list_users(
-				ListUsersRequest::new(vec![SearchQuery::new().with_and_query(
-					AndQuery::new().with_queries(vec![
-						SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human)),
-						SearchQuery::new().with_organization_id_query(OrganizationIdQuery::new(
-							self.zitadel_config.organization_id.clone(),
-						)),
-					]),
-				)])
-				.with_asc(true)
-				.with_sorting_column(UserFieldName::NickName),
+				Some(PaginationParams::DEFAULT.with_asc(true)),
+				Some(UserFieldName::NickName),
+				Some(vec![SearchQuery::new().with_and_query(AndQuery::new().with_queries(vec![
+					SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human)),
+					SearchQuery::new().with_organization_id_query(OrganizationIdQuery::new(
+						self.zitadel_config.organization_id.clone(),
+					)),
+				]))]),
 			)?
-			.map(|user| {
+			.and_then(|user| async {
 				let id = user.user_id().context("Missing Zitadel user ID")?.clone();
 				let user = search_result_to_user(user)?;
 				Ok((user, id))
@@ -157,23 +154,18 @@ impl Zitadel {
 	/// Return a vector of a random sample of Zitadel users
 	/// We use this to determine the encoding of the external IDs
 	pub async fn get_users_sample(&mut self) -> Result<Vec<User>> {
-		let mut stream = self
+		let mut stream = pin!(self
 			.zitadel_client
 			.list_users(
-				ListUsersRequest::new(vec![
-					SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))
-				])
-				.with_asc(true)
-				.with_sorting_column(UserFieldName::NickName)
-				.with_page_size(USER_SAMPLE_SIZE),
-			)
-			.map(|stream| {
-				stream.map(|user| {
-					let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
-					let user = search_result_to_user(user)?;
-					Ok((user, id))
-				})
-			})?;
+				Some(PaginationParams::DEFAULT.with_asc(true).with_page_size(USER_SAMPLE_SIZE)),
+				Some(UserFieldName::NickName),
+				Some(vec![SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))])
+			)?
+			.and_then(|user| async {
+				let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
+				let user = search_result_to_user(user)?;
+				Ok((user, id))
+			}));
 
 		let mut users = Vec::new();
 

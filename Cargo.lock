@@ -578,17 +578,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
-name = "delegate"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "297806318ef30ad066b15792a8372858020ae3ca2e414ee6c2133b1eb9e9e945"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "der"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4047,13 +4036,12 @@ dependencies = [
 
 [[package]]
 name = "zitadel-rust-client"
-version = "0.2.0"
-source = "git+https://github.com/famedly/zitadel-rust-client?rev=9031cd5db17d5d6faf2e5c9bc7b502a16179883e#9031cd5db17d5d6faf2e5c9bc7b502a16179883e"
+version = "0.3.0"
+source = "git+https://github.com/famedly/zitadel-rust-client?tag=v0.3.0#82995e7dc7f25c3b574e4fb5a521f518ce098285"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cache_control",
- "delegate",
  "famedly_rust_utils",
  "futures",
  "headers",
