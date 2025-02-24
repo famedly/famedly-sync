@@ -44,5 +44,5 @@ async fn run_sync() -> Result<()> {
 	tracing::subscriber::set_global_default(subscriber)
 		.context("Setting default tracing subscriber failed")?;
 
-	perform_sync(&config).await
+	perform_sync(&config).await?.assert_no_errors()
 }

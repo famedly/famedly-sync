@@ -2,18 +2,19 @@
 
 #![cfg(test)]
 /// E2E integration tests
-use std::{collections::HashSet, path::Path, pin::pin, time::Duration};
+use std::{collections::HashSet, path::Path, time::Duration};
 
 use base64::{engine::general_purpose, Engine as _};
 use famedly_sync::{
 	csv_test_helpers::temp_csv_file,
-	get_next_zitadel_user, perform_sync,
+	perform_sync,
 	ukt_test_helpers::{
 		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
 	},
 	zitadel::Zitadel as SyncZitadel,
-	AttributeMapping, Config, FeatureFlag,
+	AttributeMapping, Config, FeatureFlag, SkippedErrors,
 };
+use futures::TryStreamExt;
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
 use test_log::test;
 use tokio::sync::OnceCell;
@@ -545,6 +546,7 @@ async fn test_e2e_user_no_localpart_skipped() {
 	// Explicitly do not set a localpart for this user
 
 	perform_sync(&config).await.expect("syncing failed");
+
 	zitadel
 		.get_user_by_login_name("maxmustermann")
 		.await
@@ -2048,14 +2050,18 @@ fn run_migration_binary(is_dry_run: bool) {
 }
 
 async fn cleanup_test_users(config: &Config) {
-	let mut zitadel = SyncZitadel::new(config).await.expect("failed to set up Zitadel client");
-	let mut stream = pin!(zitadel.list_users().expect("failed to list users"));
-
-	while let Some(zitadel_user) =
-		get_next_zitadel_user(&mut stream, &mut zitadel).await.expect("failed to get next user")
-	{
-		zitadel.delete_user(&zitadel_user.1).await.expect("failed to delete user");
-	}
+	let zitadel = SyncZitadel::new(config, SkippedErrors::new())
+		.await
+		.expect("failed to set up Zitadel client");
+	zitadel
+		.list_users()
+		.expect("failed to list users")
+		.try_for_each_concurrent(Some(4), |zitadel_user| {
+			let zitadel = zitadel.clone();
+			async move { zitadel.delete_user(&zitadel_user.0).await }
+		})
+		.await
+		.unwrap();
 }
 
 /// Get the module's test environment config

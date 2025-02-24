@@ -1,13 +1,13 @@
 //! This binary is used to migrate user IDs from base64 to hex encoding.
-use std::{path::Path, pin::pin, str::FromStr};
+use std::{path::Path, str::FromStr};
 
 use anyhow::{Context, Result};
 use famedly_sync::{
-	get_next_zitadel_user,
 	user::{ExternalIdEncoding, User as SyncUser},
 	zitadel::Zitadel as SyncZitadel,
-	Config,
+	Config, SkippedErrors,
 };
+use futures::TryStreamExt;
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
@@ -33,31 +33,37 @@ async fn main() -> Result<()> {
 	tracing::debug!("Old external IDs will be base64 decoded and re-encoded as hex");
 	tracing::debug!("Note: External IDs are stored in the nick_name field of the user's profile in Zitadel, often referred to as uid.");
 
+	let skipped_errors = SkippedErrors::new();
+
 	// Zitadel
-	let mut zitadel = SyncZitadel::new(&config).await?;
+	let zitadel = SyncZitadel::new(&config, skipped_errors.clone()).await?;
 
 	// Detect external ID encoding based on a sample of users
 	let users_sample = zitadel.get_users_sample().await?;
 	let encoding = detect_database_encoding(users_sample);
 
-	// Get a stream of all users
-	let mut stream = pin!(zitadel.list_users()?);
+	// Get a stream of all users and process each user
+	zitadel
+		.list_users()?
+		.try_for_each_concurrent(Some(4), |(zitadel_id, user)| {
+			let zitadel = zitadel.clone();
+			async move {
+				tracing::info!(?user, "Starting migration for user");
 
-	// Process each user
-	while let Some((user, zitadel_id)) = get_next_zitadel_user(&mut stream, &mut zitadel).await? {
-		tracing::info!(?user, "Starting migration for user");
+				// Convert uid (=external ID, =nick_name) in Zitadel
+				let updated_user = user.create_user_with_converted_external_id(encoding)?;
+				tracing::debug!(?updated_user, "User updated");
 
-		// Convert uid (=external ID, =nick_name) in Zitadel
-		let updated_user = user.create_user_with_converted_external_id(encoding)?;
-		tracing::debug!(?updated_user, "User updated");
+				zitadel.update_user(&zitadel_id, &user, &updated_user).await?;
 
-		zitadel.update_user(&zitadel_id, &user, &updated_user).await?;
-
-		tracing::info!(?user, ?updated_user, "User migrated");
-	}
+				tracing::info!(?user, ?updated_user, "User migrated");
+				Ok(())
+			}
+		})
+		.await?;
 
 	tracing::info!("Migration completed.");
-	Ok(())
+	skipped_errors.assert_no_errors()
 }
 
 /// Detects the most likely encoding scheme used across all user IDs

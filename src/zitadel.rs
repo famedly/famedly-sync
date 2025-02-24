@@ -1,7 +1,7 @@
 //! Helper functions for submitting data to Zitadel
-use std::{path::PathBuf, pin::pin};
+use std::path::PathBuf;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::prelude::{Engine, BASE64_STANDARD};
 use futures::{Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
@@ -26,10 +26,12 @@ use zitadel_rust_client::{
 
 use crate::{
 	config::{Config, FeatureFlags},
-	get_next_zitadel_user,
 	user::User,
-	FeatureFlag,
+	FeatureFlag, SkippedErrors,
 };
+
+/// Zitadel user ID alias
+pub type ZitadelUserId = String;
 
 /// The Zitadel project role to assign to users.
 const FAMEDLY_USER_ROLE: &str = "User";
@@ -49,11 +51,13 @@ pub struct Zitadel {
 	/// The backing Ztiadel client, but for v1 API requests - some are
 	/// still required since the v2 API doesn't cover everything
 	zitadel_client_v1: ZitadelClientV1,
+	/// Skipped errors tracker
+	skipped_errors: SkippedErrors,
 }
 
 impl Zitadel {
 	/// Construct the Zitadel instance
-	pub async fn new(config: &Config) -> Result<Self> {
+	pub async fn new(config: &Config, skipped_errors: SkippedErrors) -> Result<Self> {
 		let zitadel_client =
 			ZitadelClient::new(config.zitadel.url.clone(), config.zitadel.key_file.clone())
 				.await
@@ -69,14 +73,15 @@ impl Zitadel {
 			feature_flags: config.feature_flags.clone(),
 			zitadel_client,
 			zitadel_client_v1,
+			skipped_errors,
 		})
 	}
 
 	/// Get a list of users by their email addresses
 	pub fn get_users_by_email(
-		&mut self,
+		&self,
 		emails: Vec<String>,
-	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
+	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
 		Ok(self
 			.zitadel_client
 			.list_users(
@@ -89,17 +94,24 @@ impl Zitadel {
 					),
 				]),
 			)?
-			.and_then(|user| async {
-				let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
-				let user = search_result_to_user(user)?;
-				Ok((user, id))
-			}))
+			// TODO: possibly remove this and abort sync,
+			// currently preserves previous behavior
+			.filter_map(|res| async {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors.clone())
+			})
+			.then(|user| {
+				let user = user.clone();
+				let selfcopy = self.clone();
+				async move { selfcopy.search_result_to_user(user).await }
+			})
+			// TODO: figure out what to do if zitadel users lack metadata
+			.filter_map(Skippable::filter_out))
 	}
 
 	/// Return a stream of Zitadel users
 	pub fn list_users(
-		&mut self,
-	) -> Result<impl Stream<Item = Result<(ZitadelUserBuilder, String)>> + Send> {
+		&self,
+	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
 		let zitadel = self.zitadel_client.clone();
 		let org_id = self.zitadel_config.organization_id.clone();
 		let project_id = self.zitadel_config.project_id.clone();
@@ -115,12 +127,19 @@ impl Zitadel {
 					)),
 				]))]),
 			)?
-			.and_then(|user| async {
-				let id = user.user_id().context("Missing Zitadel user ID")?.clone();
-				let user = search_result_to_user(user)?;
-				Ok((user, id))
+			// TODO: possibly remove this and abort sync
+			// currently preserves previous behavior
+			.filter_map(|res| async {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors.clone())
 			})
-			.try_filter_map(move |(user, user_id)| {
+			.then(|user| {
+				let selfcopy = self.clone();
+				async move { selfcopy.search_result_to_user(user).await }
+			})
+			// TODO: figure out what to do if zitadel users lack metadata
+			.filter_map(Skippable::filter_out)
+			// TODO: contact zitadel and find a better solution to avoid extra api call:
+			.try_filter_map(move |(id, user)| {
 				let org_id = org_id.clone();
 				let zitadel = zitadel.clone();
 				let project_id = project_id.clone();
@@ -140,44 +159,43 @@ impl Zitadel {
 								},
 								V1UserGrantQuery::UserId {
 									user_id_query: V1UserGrantUserIdQuery::new()
-										.with_user_id(user_id.clone()),
+										.with_user_id(id.clone()),
 								},
 							]),
 						)?
 						.next()
 						.await;
-					Ok(grant.is_some().then_some((user, user_id)))
+					Ok(grant.is_some().then_some((id, user)))
 				}
 			}))
 	}
 
 	/// Return a vector of a random sample of Zitadel users
 	/// We use this to determine the encoding of the external IDs
-	pub async fn get_users_sample(&mut self) -> Result<Vec<User>> {
-		let mut stream = pin!(self
-			.zitadel_client
+	pub async fn get_users_sample(&self) -> Result<Vec<User>> {
+		self.zitadel_client
 			.list_users(
 				Some(PaginationParams::DEFAULT.with_asc(true).with_page_size(USER_SAMPLE_SIZE)),
 				Some(UserFieldName::NickName),
-				Some(vec![SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))])
+				Some(vec![SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))]),
 			)?
-			.and_then(|user| async {
-				let id = user.user_id().ok_or(anyhow!("Missing Zitadel user ID"))?.clone();
-				let user = search_result_to_user(user)?;
-				Ok((user, id))
-			}));
-
-		let mut users = Vec::new();
-
-		while let Some(user) = get_next_zitadel_user(&mut stream, self).await? {
-			users.push(user.0);
-		}
-
-		Ok(users)
+			// TODO: possibly remove this and abort sync
+			// currently preserves previous behavior
+			.filter_map(|res| async {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors.clone())
+			})
+			.then(|user| {
+				let selfcopy = self.clone();
+				async move { Ok(selfcopy.search_result_to_user(user).await?.1) }
+			})
+			// TODO: figure out what to do if zitadel users lack metadata
+			.filter_map(Skippable::filter_out)
+			.try_collect::<Vec<_>>()
+			.await
 	}
 
 	/// Delete a Zitadel user
-	pub async fn delete_user(&mut self, zitadel_id: &str) -> Result<()> {
+	pub async fn delete_user(&self, zitadel_id: &str) -> Result<()> {
 		tracing::info!("Deleting user with Zitadel ID: {}", zitadel_id);
 
 		if self.feature_flags.is_enabled(FeatureFlag::DryRun) {
@@ -189,7 +207,7 @@ impl Zitadel {
 	}
 
 	/// Import a user into Zitadel
-	pub async fn import_user(&mut self, imported_user: &User) -> Result<()> {
+	pub async fn import_user(&self, imported_user: &User) -> Result<()> {
 		tracing::info!("Importing user with external ID: {}", imported_user.external_user_id);
 
 		if self.feature_flags.is_enabled(FeatureFlag::DryRun) {
@@ -269,7 +287,7 @@ impl Zitadel {
 
 	/// Update a user
 	pub async fn update_user(
-		&mut self,
+		&self,
 		zitadel_id: &str,
 		old_user: &User,
 		updated_user: &User,
@@ -361,128 +379,121 @@ impl Zitadel {
 
 		Ok(())
 	}
+
+	/// Convert a Zitadel search result to a user
+	async fn search_result_to_user(&self, user: ZitadelUser) -> Result<(ZitadelUserId, User)> {
+		let id = user.user_id().context("Missing Zitadel user ID")?.clone();
+		let human_user = user.human().context("Machine user found in human user search")?;
+		let external_id = human_user
+			.profile()
+			.and_then(|p| p.nick_name())
+			.context(format!("Missing external ID (nickname) for user {id}"))?
+			.clone();
+
+		let mk_err = |smth| format!("Missing {smth} for zitadel user {external_id} ({id})");
+
+		let first_name = human_user
+			.profile()
+			.and_then(|profile| profile.given_name())
+			.with_context(|| mk_err("first name"))?
+			.clone();
+
+		let last_name = human_user
+			.profile()
+			.and_then(|profile| profile.family_name())
+			.with_context(|| mk_err("last name"))?
+			.clone();
+
+		let email = human_user
+			.email()
+			.and_then(|human_email| human_email.email())
+			.with_context(|| mk_err("email address"))?
+			.clone();
+
+		let phone = human_user.phone().and_then(|human_phone| human_phone.phone()).cloned();
+		let localpart = self
+			.zitadel_client
+			.get_user_metadata(&id, "localpart")
+			.await
+			.context(Skippable)
+			.with_context(|| format!("Fetching localpart metadata for {external_id:?} ({id})"))?
+			.metadata()
+			.value()
+			.context(Skippable)
+			.with_context(|| mk_err("localpart"))?;
+
+		let preferred_username = self
+			.zitadel_client
+			.get_user_metadata(&id, "preferred_username")
+			.await
+			.context(Skippable)
+			.with_context(|| format!("Fetching localpart metadata for {external_id} ({id})"))?
+			.metadata()
+			.value()
+			.context(Skippable)
+			.with_context(|| mk_err("preferred username"))?;
+
+		Ok((
+			id,
+			User {
+				first_name,
+				last_name,
+				email,
+				phone,
+				enabled: true,
+				preferred_username,
+				external_user_id: external_id,
+				localpart,
+			},
+		))
+	}
 }
 
-/// Convert a Zitadel search result to a user
-pub fn search_result_to_user(user: ZitadelUser) -> Result<ZitadelUserBuilder> {
-	let human_user = user.human().ok_or(anyhow!("Machine user found in human user search"))?;
-	let external_id = human_user
-		.profile()
-		.and_then(|p| p.nick_name())
-		.ok_or(anyhow!("Missing external ID found for user"))?;
+/// Marker error to filter out some errors
+#[derive(Debug, Clone)]
+struct Skippable;
 
-	let first_name = human_user
-		.profile()
-		.and_then(|profile| profile.given_name())
-		.ok_or(anyhow!("Missing first name for {}", external_id))?
-		.clone();
-
-	let last_name = human_user
-		.profile()
-		.and_then(|profile| profile.family_name())
-		.ok_or(anyhow!("Missing last name for {}", external_id))?
-		.clone();
-
-	let email = human_user
-		.email()
-		.and_then(|human_email| human_email.email())
-		.ok_or(anyhow!("Missing email address for {}", external_id))?
-		.clone();
-
-	let phone = human_user.phone().and_then(|human_phone| human_phone.phone());
-
-	// TODO: If async closures become a reality, we
-	// should capture the correct preferred_username and localpart from metadata
-	// here.
-	let user = ZitadelUserBuilder::new(
-		first_name,
-		last_name,
-		email,
-		external_id.to_owned(),
-		phone.cloned(),
-	);
-	Ok(user)
-}
-
-/// A builder for a `User` to be used for users gathered from Zitadel
-#[derive(Debug)]
-pub struct ZitadelUserBuilder {
-	/// The user's first name
-	first_name: String,
-	/// The user's last name
-	last_name: String,
-	/// The user's email address
-	email: String,
-	/// The user's external ID
-	external_user_id: String,
-
-	/// The user's preferred username - must be set before building
-	preferred_username: Option<String>,
-	/// The user's localpart - must be set before building
-	localpart: Option<String>,
-
-	/// The user's phone number
-	phone: Option<String>,
-}
-
-impl ZitadelUserBuilder {
-	/// Basic constructor
-	#[must_use]
-	pub fn new(
-		first_name: String,
-		last_name: String,
-		email: String,
-		external_user_id: String,
-		phone: Option<String>,
-	) -> Self {
-		Self {
-			first_name,
-			last_name,
-			email,
-			external_user_id,
-			phone,
-
-			preferred_username: None,
-			localpart: None,
+impl Skippable {
+	/// Helper function to use with `[StreamExt::filter_map]`
+	#[allow(clippy::unused_async)]
+	pub async fn filter_out<T: Send>(res: Result<T>) -> Option<Result<T>> {
+		// should we `skipped_errors.notify_error()` here?
+		if let Err(e) = res.as_ref() {
+			if e.downcast_ref::<Skippable>().is_some() {
+				tracing::warn!("{e:?}");
+				return None;
+			}
 		}
+		Some(res)
 	}
+}
 
-	/// Set the user's localpart
-	#[must_use]
-	pub fn with_localpart(mut self, localpart: String) -> Self {
-		self.localpart = Some(localpart);
-		self
+impl std::fmt::Display for Skippable {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+		write!(f, "Skippable error")
 	}
+}
 
-	/// Set the user's preferred username
-	#[must_use]
-	pub fn with_preferred_username(mut self, preferred_username: String) -> Self {
-		self.preferred_username = Some(preferred_username);
-		self
-	}
+/// Helper trait for skippable zitadel errors to use with `[SkippedErrors]`
+pub trait SkipableZitadelResult<X: Send> {
+	/// Helper method for skippable zitadel errors to use with `[SkippedErrors]`
+	fn skip_zitadel_error(
+		self,
+		operation: &'static str,
+		skipped_errors: SkippedErrors,
+	) -> Option<X>;
+}
 
-	/// Build the resulting user struct - this will return an `Err`
-	/// variant if the localpart or preferred username are missing
-	pub fn build(self) -> Result<User> {
-		let Some(localpart) = self.localpart else {
-			bail!("No valid localpart set");
-		};
-
-		let Some(preferred_username) = self.preferred_username else {
-			bail!("No valid preferred username set");
-		};
-
-		Ok(User {
-			first_name: self.first_name,
-			last_name: self.last_name,
-			email: self.email,
-			phone: self.phone,
-			enabled: true,
-			external_user_id: self.external_user_id,
-
-			localpart,
-			preferred_username,
+impl<X: Send> SkipableZitadelResult<X> for Result<X> {
+	fn skip_zitadel_error(
+		self,
+		operation: &'static str,
+		skipped_errors: SkippedErrors,
+	) -> Option<X> {
+		self.inspect_err(|err| {
+			skipped_errors.notify_error(format!("Zitadel operation {operation} failed: {err:?}"));
 		})
+		.ok()
 	}
 }
 
