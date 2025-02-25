@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [0.10.0-rc1] - 2025-02-25
+
+### Features
+
+- [**breaking**] Add filtering by org and project ids
+
+### Miscellaneous Tasks
+
+- [**breaking**] Bump zitadel_rust_client to v0.3.0
+
+### Testing
+
+- Minor improvements to test-setup.sh
+- Assert that users from other projects are not deleted
+
 ## [0.9.1] - 2025-02-14
 
 ### Bug Fixes
