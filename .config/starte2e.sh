@@ -10,15 +10,14 @@ export PATH="${PATH}:/usr/bin"
 touch tests/environment/zitadel/service-user.json
 chmod a+rw tests/environment/zitadel/service-user.json
 
-# We only take down ldap if the cert are too old and need regeneration
+# We only take down ldap if the certs are too old and need regeneration
 ldap_down=""
 file_creation=$(date -r ./tests/environment/certs/ca.crt +%s || echo 0)
-if [ $(( $(date +%s) - $file_creation )) -gt 2160000 ]; # 25 days old?
-then
-ldap_down="-v ldap"
+if [ $(($(date +%s) - file_creation)) -gt $((25 * 24 * 60 * 60)) ]; then
+	ldap_down="-v ldap"
 fi
 
 # Shut down any still running test-setup first
-docker compose --project-directory ./tests/environment down -v test-setup $ldap_down || true
+docker compose --project-directory ./tests/environment down -v test-setup "$ldap_down" || true
 docker compose --project-directory ./tests/environment up --wait \
 	|| (docker compose --project-directory ./tests/environment logs test-setup; exit 1)
