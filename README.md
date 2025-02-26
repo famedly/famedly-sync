@@ -7,39 +7,107 @@ Currently supported sources:
 - CSV
 - Custom endpoint provided by UKT
 
-## Configuration
+## Deployment
 
-> [!WARNING]
+Note that famedly-sync is currently not designed to be deployed to
+projects with existing users, or projects that have been synced to
+with a different source before.
+
+> [!CAUTION]
 >
-> When creating a service user, limit them to the specific project and
-> organization scope that they are intended to sync. `famedly-sync`
-> currently does not separately limit the scope of the sync, see #103.
+> Since famedly-sync relies on metadata to perform its tasks, if users
+> that were not created by famedly-sync using the same source exist in
+> the instance, they may be **deleted** by a sync, or cause desync
+> issues if they happen to be users with elevated permissions.
 
-The tool expects a configuration file located at `./config.yaml`. See example configuration files in [./sample-configs/](./sample-configs/).
+### LDAP
 
-The default path can be changed by setting the new path to the environment variable `FAMEDLY_SYNC_CONFIG`.
+To deploy famedly-sync to sync an LDAP server to a Zitadel instance,
+the following need to be collected first:
 
-Also, individual configuration items and the whole configuration can be set using environment variables. For example, the following YAML configuration:
+- LDAP instance details
+  - URL of the LDAP/AD server
+  - Bind DN (=~username of the admin user) with which to authenticate
+  - Bind password with which to authenticate
+  - Base DN under which the users that should be synced are available
+  - An LDAP user filter to select specifically the users to sync
+  - The mapping of LDAP attributes to Zitadel attributes
+    - This may differ between instances, hence it's configurable. It
+      is often quite straightforward from listing the users with
+      `ldapsearch`, but more on this later
+  - TLS certificates, if TLS is used and mTLS is required and/or the
+    server certificate is not in the root store
+- Zitadel instance details
+  - A service user must be created.
+    - The [Zitadel
+      documentation](https://zitadel.com/docs/guides/integrate/service-users/private-key-jwt#steps-to-authenticate-a-service-user-with-private-jwt)
+      covers creating such a user.
+    - The user should be created with *only* the `Iam User Manager`
+      role for the organization that should be synced to.
+  - The relevant Project and Org IDs
+    - These are the "Resource Ids" listed on their pages in the
+      Zitadel UI
+  - SSO settings
+    - When using SSO, an IDP ID needs to be defined. IDP configuration
+      is located in the Zitadel instance's default settings - the ID
+      of a specific IDP can be glanced from its URL.
+    - Currently, this is not optional, see [this
+      issue](https://github.com/famedly/famedly-sync/issues/102). For
+      now, setting the ID to `000000000000000000` when not needed is a
+      reasonable workaround.
 
-```yaml
-sources:
-  ldap:
-    url: ldap://localhost:1389
-```
+Once this has been gathered, the following steps are advised:
 
-Could be set using the following environment variable:
+1. Asserting correctness of the LDAP configuration
 
-```bash
-FAMEDLY_SYNC__SOURCES__LDAP__URL="ldap://localhost:1389"
-```
+   This can be done using `ldapsearch`, which is part `openldap` (on
+   ubuntu hosts, in the `ldap-utils` package). The basic search command
+   can be translated from the previously acquired data to:
 
-Note that the environment variable name always starts with the prefix `FAMEDLY_SYNC` followed by keys separated by double underscores (`__`).
+   ```
+   ldapsearch -H "$LDAP_URL" -D "$LDAP_BIND_DN" -w "$LDAP_BIND_PASSWORD" -b "$LDAP_BASE_DN" "$LDAP_USER_FILTER"
+   ```
 
-Some configuration items take a list of values. In this cases the values should be separated by space. **If an empty list is desired the variable shouldn't be created.**
+   If this does not return all user data required for the attribute
+   mapping, also add the expected attributes to the end of the command.
 
-Config can have **various sources** to sync from. When a source is configured, the sync tool tries to update users in Famedly's Zitadel instance based on the data obtained from the source.
+2. Writing the famedly-sync configuration
 
-**Feature flags** are optional and can be used to enable or disable certain features.
+   To prevent this document going out of date, we will not repeat the
+   configuration syntax here. See
+   [./sample-configs/ldap-config.sample.yaml](./sample-configs/ldap-config.sample.yaml)
+   for details.
+
+   Noteworthy is that the `use_attribute_filter` config setting
+   *should* be set to true if, and only if, attributes needed to be
+   added to the `ldapsearch` command.
+
+3. Deploying the docker container
+
+   A relatively fool-proof way of doing this is with `docker
+   compose`. This composefile, and a copy of the service user's JWT
+   and the just-created configuration in `./opt/`, is all that should
+   be required:
+
+   ```yaml
+   services:
+     famedly-sync-agent:
+       image: docker-oss.nexus.famedly.de/famedly-sync-agent:<version>
+       volumes:
+         - type: bind
+           source: ./opt
+           target: /opt/famedly-sync
+       network_mode: host
+   ```
+
+   Assuming a recent-enough docker version, this can then be invoked
+   with `docker compose up`.
+
+   Since the `./opt` directory will be bind-mounted to
+   `/opt/famedly-sync` in the docker container (and docker containers
+   do not permit access to host files by other means), any files
+   referenced in the configuration *should* be relative to prevent
+   file access issues.
 
 ## Migrations
 
@@ -61,39 +129,7 @@ base64-encoded one. No other values should change during migration.
 A Zitadel instance that is already using hex-encoded IDs will not be
 altered (though famedly-sync will still make various HTTP calls).
 
-
-## Deployment
-
-The easiest way to deploy this tool is using our published docker
-container through our [composefile](./docker-compose.yaml).
-
-To prepare for use, we need to provide a handful of files in an `opt`
-directory in the directory where `docker compose` will be
-executed. This is the expected directory structure of the sample
-configuration file:
-
-```
-opt
-├── certs
-│  └── test-ldap.crt   # The TLS certificate of the LDAP server
-├── config.yaml        # Example configs can be found in [./sample-configs](./sample-configs)
-└── service-user.json  # Provided by famedly
-```
-
-Once this is in place, the container can be executed in the parent
-directory of `opt` with:
-
-```
-docker compose up
-```
-
-Or alternatively, without `docker compose`:
-
-```
-docker run --rm -it --network host --volume ./opt:/opt/famedly-sync docker-oss.nexus.famedly.de/famedly-sync-agent:latest
-```
-
-### Kubernetes Deployment
+## Kubernetes Deployment
 
 The provided manifest `ldap-sync-cronjob.yaml` can be used
 to deploy this tool as a CronJob on a Kubernetes cluster.
@@ -109,6 +145,26 @@ to be present in the `ldap-sync` namespace. The ConfigMap can be created using
 ```
 kubectl create configmap --from-file config.yaml famedly-sync --namespace ldap-sync
 ```
+
+### Configuration through env variables
+
+Since kubernetes deployments prefer env-based configuration, famedly-sync supports this.
+
+Individual configuration items and the whole configuration can be set using environment variables. For example, the following YAML configuration:
+
+```yaml
+sources:
+  ldap:
+    url: ldap://localhost:1389
+```
+
+Could be set using the following environment variable:
+
+```bash
+FAMEDLY_SYNC__SOURCES__LDAP__URL="ldap://localhost:1389"
+```
+
+Some configuration items take a list of values. In this cases the values should be separated by space. **If an empty list is desired the variable shouldn't be created.**
 
 ## Quirks & Edge Cases
 
