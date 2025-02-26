@@ -1,14 +1,15 @@
 //! Helper functions for submitting data to Zitadel
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
-use base64::prelude::{Engine, BASE64_STANDARD};
+use anyhow::{Context, Result, anyhow};
+use base64::prelude::{BASE64_STANDARD, Engine};
 use futures::{Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use zitadel_rust_client::{
 	v1::Zitadel as ZitadelClientV1,
 	v2::{
+		Zitadel as ZitadelClient,
 		management::{
 			V1UserGrantProjectIdQuery, V1UserGrantQuery, V1UserGrantRoleKeyQuery,
 			V1UserGrantUserIdQuery,
@@ -20,11 +21,10 @@ use zitadel_rust_client::{
 			SetMetadataEntry, TypeQuery, UpdateHumanUserRequest, User as ZitadelUser,
 			UserFieldName, Userv2Type,
 		},
-		Zitadel as ZitadelClient,
 	},
 };
 
-use crate::{config::FeatureFlags, user::User, FeatureFlag, SkippedErrors};
+use crate::{FeatureFlag, SkippedErrors, config::FeatureFlags, user::User};
 
 /// Zitadel user ID alias
 pub type ZitadelUserId = String;
@@ -227,10 +227,12 @@ impl<'s> Zitadel<'s> {
 		};
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
-			user.set_idp_links(vec![IdpLink::new()
-				.with_user_id(get_zitadel_encoded_id(imported_user.get_external_id_bytes()?))
-				.with_idp_id(self.zitadel_config.idp_id.clone())
-				.with_user_name(imported_user.email.clone())]);
+			user.set_idp_links(vec![
+				IdpLink::new()
+					.with_user_id(get_zitadel_encoded_id(imported_user.get_external_id_bytes()?))
+					.with_idp_id(self.zitadel_config.idp_id.clone())
+					.with_user_name(imported_user.email.clone()),
+			]);
 		}
 
 		match self.zitadel_client.create_human_user(user.clone()).await {

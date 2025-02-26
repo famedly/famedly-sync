@@ -2,7 +2,7 @@
 
 use std::{fmt::Display, path::PathBuf, time::Duration};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use itertools::Itertools;
 use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
@@ -432,7 +432,7 @@ mod tests {
 	use itertools::Itertools;
 	use ldap3::SearchEntry;
 
-	use crate::{sources::ldap::LdapSource, Config};
+	use crate::{Config, sources::ldap::LdapSource};
 
 	const EXAMPLE_CONFIG: &str = indoc! {r#"
         zitadel:

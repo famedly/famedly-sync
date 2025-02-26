@@ -14,11 +14,11 @@ pub mod zitadel;
 use std::{collections::VecDeque, pin::pin};
 
 pub use config::{Config, FeatureFlag, LdapSourceConfig};
+use sources::{Source, csv::CsvSource, ldap::LdapSource, ukt::UktSource};
 pub use sources::{
 	csv::test_helpers as csv_test_helpers, ldap::AttributeMapping,
 	ukt::test_helpers as ukt_test_helpers,
 };
-use sources::{csv::CsvSource, ldap::LdapSource, ukt::UktSource, Source};
 
 /// Perform a sync operation
 pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {

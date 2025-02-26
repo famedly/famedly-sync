@@ -120,8 +120,8 @@ pub mod test_helpers {
 	use http::StatusCode;
 	use url::Url;
 	use wiremock::{
-		matchers::{body_string_contains, header, method, path, query_param},
 		Mock, MockServer, ResponseTemplate,
+		matchers::{body_string_contains, header, method, path, query_param},
 	};
 
 	use super::*;

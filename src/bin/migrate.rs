@@ -3,9 +3,9 @@ use std::{path::Path, str::FromStr};
 
 use anyhow::{Context, Result};
 use famedly_sync::{
+	Config, SkippedErrors,
 	user::{ExternalIdEncoding, User as SyncUser},
 	zitadel::Zitadel as SyncZitadel,
-	Config, SkippedErrors,
 };
 use futures::TryStreamExt;
 use tracing::level_filters::LevelFilter;
@@ -31,7 +31,9 @@ async fn main() -> Result<()> {
 
 	tracing::info!("Starting migration");
 	tracing::debug!("Old external IDs will be base64 decoded and re-encoded as hex");
-	tracing::debug!("Note: External IDs are stored in the nick_name field of the user's profile in Zitadel, often referred to as uid.");
+	tracing::debug!(
+		"Note: External IDs are stored in the nick_name field of the user's profile in Zitadel, often referred to as uid."
+	);
 
 	let skipped_errors = SkippedErrors::new();
 

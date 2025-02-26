@@ -1,7 +1,7 @@
 //! User data helpers
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose, Engine as _};
-use uuid::{uuid, Uuid};
+use base64::{Engine as _, engine::general_purpose};
+use uuid::{Uuid, uuid};
 
 /// The Famedly UUID namespace to use to generate v5 UUIDs.
 const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");

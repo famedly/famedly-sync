@@ -4,26 +4,26 @@
 /// E2E integration tests
 use std::{collections::HashSet, path::Path, time::Duration};
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use famedly_sync::{
+	AttributeMapping, Config, FeatureFlag, SkippedErrors,
 	csv_test_helpers::temp_csv_file,
 	perform_sync,
 	ukt_test_helpers::{
-		get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock, ENDPOINT_PATH, OAUTH2_PATH,
+		ENDPOINT_PATH, OAUTH2_PATH, get_mock_server_url, prepare_endpoint_mock, prepare_oauth2_mock,
 	},
 	zitadel::Zitadel as SyncZitadel,
-	AttributeMapping, Config, FeatureFlag, SkippedErrors,
 };
 use futures::TryStreamExt;
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
 use test_log::test;
 use tokio::sync::OnceCell;
 use url::Url;
-use uuid::{uuid, Uuid};
+use uuid::{Uuid, uuid};
 use wiremock::MockServer;
 use zitadel_rust_client::v1::{
-	error::{Error as ZitadelError, TonicErrorCode},
 	Email, Gender, ImportHumanUserRequest, Phone, Profile, UserType, Zitadel,
+	error::{Error as ZitadelError, TonicErrorCode},
 };
 
 static CONFIG_WITH_LDAP: OnceCell<Config> = OnceCell::const_new();
@@ -1055,18 +1055,16 @@ async fn test_e2e_dry_run() {
 	// Assert that disabling a user does not sync
 	ldap.change_user("dry_run", vec![("shadowFlag", HashSet::from(["514"]))]).await;
 	perform_sync(dry_run_config.clone()).await.expect("syncing failed");
-	assert!(zitadel
-		.get_user_by_login_name("dry_run@famedly.de")
-		.await
-		.is_ok_and(|user| user.is_some()));
+	assert!(
+		zitadel.get_user_by_login_name("dry_run@famedly.de").await.is_ok_and(|user| user.is_some())
+	);
 
 	// Assert that a user deletion does not sync
 	ldap.delete_user("dry_run").await;
 	perform_sync(dry_run_config.clone()).await.expect("syncing failed");
-	assert!(zitadel
-		.get_user_by_login_name("dry_run@famedly.de")
-		.await
-		.is_ok_and(|user| user.is_some()));
+	assert!(
+		zitadel.get_user_by_login_name("dry_run@famedly.de").await.is_ok_and(|user| user.is_some())
+	);
 }
 
 #[test(tokio::test)]

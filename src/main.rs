@@ -2,7 +2,7 @@
 use std::{path::Path, process::ExitCode, str::FromStr};
 
 use anyhow::{Context, Result};
-use famedly_sync::{perform_sync, Config};
+use famedly_sync::{Config, perform_sync};
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
