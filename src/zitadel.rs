@@ -24,11 +24,7 @@ use zitadel_rust_client::{
 	},
 };
 
-use crate::{
-	config::{Config, FeatureFlags},
-	user::User,
-	FeatureFlag, SkippedErrors,
-};
+use crate::{config::FeatureFlags, user::User, FeatureFlag, SkippedErrors};
 
 /// Zitadel user ID alias
 pub type ZitadelUserId = String;
@@ -41,7 +37,7 @@ const USER_SAMPLE_SIZE: usize = 50;
 
 /// A very high-level Zitadel zitadel_client
 #[derive(Clone, Debug)]
-pub struct Zitadel {
+pub struct Zitadel<'s> {
 	/// Zitadel configuration
 	zitadel_config: ZitadelConfig,
 	/// Optional set of features
@@ -52,25 +48,29 @@ pub struct Zitadel {
 	/// still required since the v2 API doesn't cover everything
 	zitadel_client_v1: ZitadelClientV1,
 	/// Skipped errors tracker
-	skipped_errors: SkippedErrors,
+	skipped_errors: &'s SkippedErrors,
 }
 
-impl Zitadel {
+impl<'s> Zitadel<'s> {
 	/// Construct the Zitadel instance
-	pub async fn new(config: &Config, skipped_errors: SkippedErrors) -> Result<Self> {
+	pub async fn new(
+		zitadel_config: ZitadelConfig,
+		feature_flags: FeatureFlags,
+		skipped_errors: &'s SkippedErrors,
+	) -> Result<Self> {
 		let zitadel_client =
-			ZitadelClient::new(config.zitadel.url.clone(), config.zitadel.key_file.clone())
+			ZitadelClient::new(zitadel_config.url.clone(), zitadel_config.key_file.clone())
 				.await
 				.context("failed to configure zitadel_client")?;
 
 		let zitadel_client_v1 =
-			ZitadelClientV1::new(config.zitadel.url.clone(), config.zitadel.key_file.clone())
+			ZitadelClientV1::new(zitadel_config.url.clone(), zitadel_config.key_file.clone())
 				.await
 				.context("failed to configure zitadel_client_v1")?;
 
 		Ok(Self {
-			zitadel_config: config.zitadel.clone(),
-			feature_flags: config.feature_flags.clone(),
+			zitadel_config,
+			feature_flags,
 			zitadel_client,
 			zitadel_client_v1,
 			skipped_errors,
@@ -96,14 +96,10 @@ impl Zitadel {
 			)?
 			// TODO: possibly remove this and abort sync,
 			// currently preserves previous behavior
-			.filter_map(|res| async {
-				res.skip_zitadel_error("fetching users by email", self.skipped_errors.clone())
+			.filter_map(async |res| {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors)
 			})
-			.then(|user| {
-				let user = user.clone();
-				let selfcopy = self.clone();
-				async move { selfcopy.search_result_to_user(user).await }
-			})
+			.then(async |user| self.search_result_to_user(user).await)
 			// TODO: figure out what to do if zitadel users lack metadata
 			.filter_map(Skippable::filter_out))
 	}
@@ -112,9 +108,6 @@ impl Zitadel {
 	pub fn list_users(
 		&self,
 	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
-		let zitadel = self.zitadel_client.clone();
-		let org_id = self.zitadel_config.organization_id.clone();
-		let project_id = self.zitadel_config.project_id.clone();
 		Ok(self
 			.zitadel_client
 			.list_users(
@@ -129,44 +122,37 @@ impl Zitadel {
 			)?
 			// TODO: possibly remove this and abort sync
 			// currently preserves previous behavior
-			.filter_map(|res| async {
-				res.skip_zitadel_error("fetching users by email", self.skipped_errors.clone())
+			.filter_map(async |res| {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors)
 			})
-			.then(|user| {
-				let selfcopy = self.clone();
-				async move { selfcopy.search_result_to_user(user).await }
-			})
+			.then(async |user| self.search_result_to_user(user).await)
 			// TODO: figure out what to do if zitadel users lack metadata
 			.filter_map(Skippable::filter_out)
 			// TODO: contact zitadel and find a better solution to avoid extra api call:
-			.try_filter_map(move |(id, user)| {
-				let org_id = org_id.clone();
-				let zitadel = zitadel.clone();
-				let project_id = project_id.clone();
-				async move {
-					let grant = zitadel
-						.search_user_grants(
-							Some(org_id),
-							Some(PaginationParams::default().with_page_size(1)),
-							Some(vec![
-								V1UserGrantQuery::ProjectId {
-									project_id_query: (V1UserGrantProjectIdQuery::new()
-										.with_project_id(project_id)),
-								},
-								V1UserGrantQuery::RoleKey {
-									role_key_query: V1UserGrantRoleKeyQuery::new()
-										.with_role_key("User".into()),
-								},
-								V1UserGrantQuery::UserId {
-									user_id_query: V1UserGrantUserIdQuery::new()
-										.with_user_id(id.clone()),
-								},
-							]),
-						)?
-						.next()
-						.await;
-					Ok(grant.is_some().then_some((id, user)))
-				}
+			.try_filter_map(async |(id, user)| {
+				let grant = self
+					.zitadel_client
+					.search_user_grants(
+						Some(self.zitadel_config.organization_id.clone()),
+						Some(PaginationParams::default().with_page_size(1)),
+						Some(vec![
+							V1UserGrantQuery::ProjectId {
+								project_id_query: (V1UserGrantProjectIdQuery::new()
+									.with_project_id(self.zitadel_config.project_id.clone())),
+							},
+							V1UserGrantQuery::RoleKey {
+								role_key_query: V1UserGrantRoleKeyQuery::new()
+									.with_role_key("User".into()),
+							},
+							V1UserGrantQuery::UserId {
+								user_id_query: V1UserGrantUserIdQuery::new()
+									.with_user_id(id.clone()),
+							},
+						]),
+					)?
+					.next()
+					.await;
+				Ok(grant.is_some().then_some((id, user)))
 			}))
 	}
 
@@ -181,13 +167,10 @@ impl Zitadel {
 			)?
 			// TODO: possibly remove this and abort sync
 			// currently preserves previous behavior
-			.filter_map(|res| async {
-				res.skip_zitadel_error("fetching users by email", self.skipped_errors.clone())
+			.filter_map(async |res| {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors)
 			})
-			.then(|user| {
-				let selfcopy = self.clone();
-				async move { Ok(selfcopy.search_result_to_user(user).await?.1) }
-			})
+			.then(async |user| Ok(self.search_result_to_user(user).await?.1))
 			// TODO: figure out what to do if zitadel users lack metadata
 			.filter_map(Skippable::filter_out)
 			.try_collect::<Vec<_>>()
@@ -480,7 +463,7 @@ pub trait SkipableZitadelResult<X: Send> {
 	fn skip_zitadel_error(
 		self,
 		operation: &'static str,
-		skipped_errors: SkippedErrors,
+		skipped_errors: &SkippedErrors,
 	) -> Option<X>;
 }
 
@@ -488,7 +471,7 @@ impl<X: Send> SkipableZitadelResult<X> for Result<X> {
 	fn skip_zitadel_error(
 		self,
 		operation: &'static str,
-		skipped_errors: SkippedErrors,
+		skipped_errors: &SkippedErrors,
 	) -> Option<X> {
 		self.inspect_err(|err| {
 			skipped_errors.notify_error(format!("Zitadel operation {operation} failed: {err:?}"));

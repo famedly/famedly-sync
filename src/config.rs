@@ -128,6 +128,7 @@ fn validate_zitadel_url(url: Url) -> Result<Url> {
 // RUST_TEST_THREADS=1 cargo test --lib
 #[cfg(test)]
 mod tests {
+	#![allow(clippy::undocumented_unsafe_blocks)]
 	use std::{env, fs::File, io::Write, path::PathBuf};
 
 	use indoc::indoc;
@@ -260,11 +261,15 @@ mod tests {
 		let file_path = create_config_file(tempdir.path());
 
 		let env_var_name = format!("{ENV_VAR_CONFIG_PREFIX}__FEATURE_FLAGS");
-		env::set_var(&env_var_name, "dry_run");
+		unsafe {
+			env::set_var(&env_var_name, "dry_run");
+		}
 
 		let loaded_config =
 			Config::new(file_path.as_path()).expect("Failed to create config object");
-		env::remove_var(env_var_name);
+		unsafe {
+			env::remove_var(env_var_name);
+		}
 
 		let mut sample_config = load_config();
 		sample_config.feature_flags.push(FeatureFlag::DryRun);
@@ -277,7 +282,9 @@ mod tests {
 		let env_vars = example_env_vars();
 		for (key, value) in &env_vars {
 			if !value.is_empty() {
-				env::set_var(key, value);
+				unsafe {
+					env::set_var(key, value);
+				}
 			}
 		}
 
@@ -285,7 +292,9 @@ mod tests {
 			Config::new(Path::new("no_file.yaml")).expect("Failed to create config object");
 
 		for (key, _) in &env_vars {
-			env::remove_var(key);
+			unsafe {
+				env::remove_var(key);
+			}
 		}
 
 		assert_eq!(load_config(), config);
@@ -297,10 +306,12 @@ mod tests {
 		let file_path = create_config_file(tempdir.path());
 
 		let env_var_name = format!("{ENV_VAR_CONFIG_PREFIX}__FEATURE_FLAGS");
-		env::set_var(
-			&env_var_name,
-			"sso_login verify_email verify_phone dry_run deactivate_only plain_localpart",
-		);
+		unsafe {
+			env::set_var(
+				&env_var_name,
+				"sso_login verify_email verify_phone dry_run deactivate_only plain_localpart",
+			);
+		}
 
 		let loaded_config =
 			Config::new(file_path.as_path()).expect("Failed to create config object");
@@ -313,7 +324,9 @@ mod tests {
 		sample_config.feature_flags.push(FeatureFlag::DeactivateOnly);
 		sample_config.feature_flags.push(FeatureFlag::PlainLocalpart);
 
-		env::remove_var(env_var_name);
+		unsafe {
+			env::remove_var(env_var_name);
+		}
 
 		assert_eq!(sample_config, loaded_config);
 	}

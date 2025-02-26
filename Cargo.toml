@@ -2,7 +2,7 @@
 name = "famedly-sync"
 version = "0.9.1"
 authors = []
-edition = "2021"
+edition = "2024"
 publish = false
 
 [[bin]]

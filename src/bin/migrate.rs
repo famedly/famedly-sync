@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
 	let skipped_errors = SkippedErrors::new();
 
 	// Zitadel
-	let zitadel = SyncZitadel::new(&config, skipped_errors.clone()).await?;
+	let zitadel = SyncZitadel::new(config.zitadel, config.feature_flags, &skipped_errors).await?;
 
 	// Detect external ID encoding based on a sample of users
 	let users_sample = zitadel.get_users_sample().await?;
@@ -45,20 +45,17 @@ async fn main() -> Result<()> {
 	// Get a stream of all users and process each user
 	zitadel
 		.list_users()?
-		.try_for_each_concurrent(Some(4), |(zitadel_id, user)| {
-			let zitadel = zitadel.clone();
-			async move {
-				tracing::info!(?user, "Starting migration for user");
+		.try_for_each_concurrent(Some(4), async |(zitadel_id, user)| {
+			tracing::info!(?user, "Starting migration for user");
 
-				// Convert uid (=external ID, =nick_name) in Zitadel
-				let updated_user = user.create_user_with_converted_external_id(encoding)?;
-				tracing::debug!(?updated_user, "User updated");
+			// Convert uid (=external ID, =nick_name) in Zitadel
+			let updated_user = user.create_user_with_converted_external_id(encoding)?;
+			tracing::debug!(?updated_user, "User updated");
 
-				zitadel.update_user(&zitadel_id, &user, &updated_user).await?;
+			zitadel.update_user(&zitadel_id, &user, &updated_user).await?;
 
-				tracing::info!(?user, ?updated_user, "User migrated");
-				Ok(())
-			}
+			tracing::info!(?user, ?updated_user, "User migrated");
+			Ok(())
 		})
 		.await?;
 

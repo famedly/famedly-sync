@@ -1,8 +1,5 @@
 //! Sync tool between other sources and our infrastructure based on Zitadel.
-use std::sync::{
-	atomic::{AtomicUsize, Ordering},
-	Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use futures::{StreamExt, TryStreamExt};
@@ -24,7 +21,7 @@ pub use sources::{
 use sources::{csv::CsvSource, ldap::LdapSource, ukt::UktSource, Source};
 
 /// Perform a sync operation
-pub async fn perform_sync(config: &Config) -> Result<SkippedErrors> {
+pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	/// Get users from a source
 	async fn get_users_from_source(source: impl Source + Send) -> Result<VecDeque<User>> {
 		source
@@ -34,17 +31,20 @@ pub async fn perform_sync(config: &Config) -> Result<SkippedErrors> {
 			.context(format!("Failed to query users from {}", source.get_name()))
 	}
 
-	let csv = config.sources.csv.clone().map(CsvSource::new);
-	let ldap = config.sources.ldap.clone().map(LdapSource::new);
-	let ukt = config.sources.ukt.clone().map(UktSource::new);
+	let deactivate_only = config.feature_flags.is_enabled(FeatureFlag::DeactivateOnly);
 
 	let skipped_errors = SkippedErrors::new();
+	let zitadel = Zitadel::new(config.zitadel, config.feature_flags, &skipped_errors).await?;
+
+	let csv = config.sources.csv.map(CsvSource::new);
+	let ldap = config.sources.ldap.map(LdapSource::new);
+	let ukt = config.sources.ukt.map(UktSource::new);
 
 	// The ukt source is handled specially, since it doesn't behave as
 	// the others
 	if let Some(ukt) = ukt {
 		match ukt.get_removed_user_emails().await {
-			Ok(users) => delete_users_by_email(config, users, skipped_errors.clone()).await?,
+			Ok(users) => delete_users_by_email(&zitadel, &skipped_errors, users).await?,
 			Err(err) => {
 				anyhow::bail!("Failed to query users from ukt: {:?}", err);
 			}
@@ -62,10 +62,10 @@ pub async fn perform_sync(config: &Config) -> Result<SkippedErrors> {
 		}
 	};
 
-	if config.feature_flags.is_enabled(FeatureFlag::DeactivateOnly) {
-		disable_users(config, &mut users, skipped_errors.clone()).await?;
+	if deactivate_only {
+		disable_users(&zitadel, &skipped_errors, &mut users).await?;
 	} else {
-		sync_users(config, &mut users, skipped_errors.clone()).await?;
+		sync_users(&zitadel, &skipped_errors, &mut users).await?;
 	}
 
 	Ok(skipped_errors)
@@ -73,16 +73,18 @@ pub async fn perform_sync(config: &Config) -> Result<SkippedErrors> {
 
 /// Delete a list of users given their email addresses
 async fn delete_users_by_email(
-	config: &Config,
+	zitadel: &Zitadel<'_>,
+	skipped_errors: &SkippedErrors,
 	emails: Vec<String>,
-	skipped_errors: SkippedErrors,
 ) -> Result<()> {
-	let zitadel = Zitadel::new(config, skipped_errors).await?;
 	zitadel
 		.get_users_by_email(emails)?
-		.try_for_each_concurrent(Some(4), |(zitadel_id, _)| {
-			let zitadel = zitadel.clone();
-			async move { zitadel.delete_user(&zitadel_id).await }
+		.try_for_each_concurrent(Some(4), async |(zitadel_id, _)| {
+			zitadel
+				.delete_user(&zitadel_id)
+				.await
+				.skip_zitadel_error("deleting user", skipped_errors);
+			Ok(())
 		})
 		.await?;
 
@@ -92,21 +94,23 @@ async fn delete_users_by_email(
 /// Only disable users
 #[tracing::instrument(skip_all)]
 async fn disable_users(
-	config: &Config,
+	zitadel: &Zitadel<'_>,
+	skipped_errors: &SkippedErrors,
 	users: &mut VecDeque<User>,
-	skipped_errors: SkippedErrors,
 ) -> Result<()> {
 	// We only care about disabled users for this flow
 	users.retain(|user| !user.enabled);
 
-	let zitadel = Zitadel::new(config, skipped_errors).await?;
 	let mut stream = pin!(zitadel.list_users()?);
 
 	while let Some((zitadel_id, zitadel_user)) = stream.next().await.transpose()? {
 		if users.front().map(|user| user.external_user_id.clone())
 			== Some(zitadel_user.external_user_id)
 		{
-			zitadel.delete_user(&zitadel_id).await?;
+			zitadel
+				.delete_user(&zitadel_id)
+				.await
+				.skip_zitadel_error("deleting user", skipped_errors);
 			users.pop_front();
 		}
 	}
@@ -117,15 +121,14 @@ async fn disable_users(
 /// Fully sync users
 #[tracing::instrument(skip_all)]
 async fn sync_users(
-	config: &Config,
+	zitadel: &Zitadel<'_>,
+	skipped_errors: &SkippedErrors,
 	sync_users: &mut VecDeque<User>,
-	skipped_errors: SkippedErrors,
 ) -> Result<()> {
 	// Treat any disabled users as deleted, so we simply pretend they
 	// are not in the list
 	sync_users.retain(|user| user.enabled);
 
-	let zitadel = Zitadel::new(config, skipped_errors.clone()).await?;
 	let mut stream = pin!(zitadel.list_users()?);
 
 	let mut source_user = sync_users.pop_front();
@@ -153,7 +156,7 @@ async fn sync_users(
 					.with_context(|| {
 						format!("Failed to delete user with Zitadel ID `{}`", zitadel_id,)
 					})
-					.skip_zitadel_error("deleting user", skipped_errors.clone());
+					.skip_zitadel_error("deleting user", skipped_errors);
 
 				zitadel_user = stream.next().await.transpose()?;
 			}
@@ -167,7 +170,7 @@ async fn sync_users(
 					.with_context(|| {
 						format!("Failed to import user `{}`", new_user.external_user_id)
 					})
-					.skip_zitadel_error("importing user", skipped_errors.clone());
+					.skip_zitadel_error("importing user", skipped_errors);
 
 				source_user = sync_users.pop_front();
 			}
@@ -191,7 +194,7 @@ async fn sync_users(
 					.with_context(|| {
 						format!("Failed to import user `{}`", new_user.external_user_id,)
 					})
-					.skip_zitadel_error("importing user", skipped_errors.clone());
+					.skip_zitadel_error("importing user", skipped_errors);
 
 				source_user = sync_users.pop_front();
 				// Don't fetch the next zitadel user yet
@@ -209,7 +212,7 @@ async fn sync_users(
 					.with_context(|| {
 						format!("Failed to delete user with Zitadel ID `{}`", zitadel_id,)
 					})
-					.skip_zitadel_error("deleting user", skipped_errors.clone());
+					.skip_zitadel_error("deleting user", skipped_errors);
 
 				zitadel_user = stream.next().await.transpose()?;
 				// Don't move to the next source user yet
@@ -227,7 +230,7 @@ async fn sync_users(
 					.with_context(|| {
 						format!("Failed to update user `{}`", new_user.external_user_id,)
 					})
-					.skip_zitadel_error("updating user", skipped_errors.clone());
+					.skip_zitadel_error("updating user", skipped_errors);
 
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();
@@ -251,14 +254,14 @@ async fn sync_users(
 }
 
 /// Skipped errors tracker
-#[derive(Debug, Clone)]
-pub struct SkippedErrors(Arc<AtomicUsize>);
+#[derive(Debug)]
+pub struct SkippedErrors(AtomicUsize);
 
 #[allow(missing_docs, clippy::new_without_default)]
 impl SkippedErrors {
 	#[must_use]
 	pub fn new() -> Self {
-		Self(Arc::new(AtomicUsize::new(0)))
+		Self(AtomicUsize::new(0))
 	}
 	pub fn notify_error(&self, err: impl AsRef<str>) {
 		self.0.fetch_add(1, Ordering::Relaxed);
