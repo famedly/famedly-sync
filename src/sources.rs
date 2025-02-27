@@ -1,6 +1,6 @@
 //! Sources of data we want to sync from.
 
-use anyhow::Result;
+use anyhow_ext::Result;
 use async_trait::async_trait;
 
 pub mod csv;

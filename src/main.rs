@@ -1,8 +1,8 @@
 //! Tool for syncing different sources to Famedly's Zitadel
 use std::{path::Path, process::ExitCode, str::FromStr};
 
-use anyhow::{Context, Result};
-use famedly_sync::{perform_sync, Config};
+use anyhow_ext::{Context, Result};
+use famedly_sync::{Config, perform_sync};
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
@@ -44,5 +44,5 @@ async fn run_sync() -> Result<()> {
 	tracing::subscriber::set_global_default(subscriber)
 		.context("Setting default tracing subscriber failed")?;
 
-	perform_sync(&config).await
+	perform_sync(config).await?.assert_no_errors()
 }
