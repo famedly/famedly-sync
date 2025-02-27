@@ -2,7 +2,7 @@
 
 use std::{fmt::Display, path::PathBuf, time::Duration};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow_ext::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use itertools::Itertools;
 use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
@@ -20,6 +20,7 @@ pub struct LdapSource {
 }
 
 #[async_trait]
+#[anyhow_trace::anyhow_trace]
 impl Source for LdapSource {
 	fn get_name(&self) -> &'static str {
 		"LDAP"
@@ -82,6 +83,7 @@ impl Source for LdapSource {
 	}
 }
 
+#[anyhow_trace::anyhow_trace]
 impl LdapSource {
 	/// Create a new LDAP source
 	pub fn new(ldap_config: LdapSourceConfig) -> Self {
@@ -158,6 +160,7 @@ impl LdapSource {
 }
 
 /// Read an an attribute, but assert that it is a string
+#[anyhow_trace::anyhow_trace]
 fn read_string_entry(
 	entry: &SearchEntry,
 	attribute: &AttributeMapping,
@@ -174,6 +177,7 @@ fn read_string_entry(
 }
 
 /// Read an attribute from the entry
+#[anyhow_trace::anyhow_trace]
 fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Result<StringOrBytes> {
 	match attribute {
 		AttributeMapping::OptionalBinary { name, is_binary: false }
@@ -234,6 +238,7 @@ pub struct LdapSourceConfig {
 	pub tls: Option<LdapTlsConfig>,
 }
 
+#[anyhow_trace::anyhow_trace]
 impl LdapSourceConfig {
 	/// Get the attribute list, taking into account whether we should
 	/// be using the attribute filter or not.
@@ -246,6 +251,7 @@ impl LdapSourceConfig {
 	}
 }
 
+#[anyhow_trace::anyhow_trace]
 impl TryFrom<LdapSourceConfig> for LdapConnSettings {
 	type Error = anyhow::Error;
 

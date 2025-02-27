@@ -649,7 +649,7 @@ async fn test_e2e_ldaps_invalid_ident() {
 	let result = perform_sync(config.clone()).await;
 
 	assert!(result.is_err());
-	assert!(result.unwrap_err().source().is_some_and(|source| {
+	assert!(result.unwrap_err().chain().any(|source| {
 		source.to_string().contains("Both client key *and* certificate must be specified")
 	}));
 }
@@ -958,13 +958,15 @@ async fn test_e2e_binary_preferred_username() {
 		Ok(sync_result) => {
 			assert!(sync_result.is_err());
 			let error = sync_result.unwrap_err();
-			assert!(error.to_string().contains("Failed to query users from LDAP"));
-			if let Some(cause) = error.source() {
-				assert!(cause.to_string().contains("Binary values are not accepted"));
-				assert!(cause.to_string().contains("attribute `userSMIMECertificate`"));
-			} else {
-				panic!("Expected error to have a cause");
-			}
+			assert!(
+				error.chain().any(|e| e.to_string().contains("Failed to query users from LDAP"))
+			);
+			assert!(
+				error.chain().any(|e| e.to_string().contains("Binary values are not accepted"))
+			);
+			assert!(
+				error.chain().any(|e| e.to_string().contains("attribute `userSMIMECertificate`"))
+			);
 		}
 		Err(join_error) if join_error.is_panic() => {
 			panic!("perform_sync panicked unexpectedly: {}", join_error);
@@ -992,13 +994,15 @@ async fn test_e2e_binary_preferred_username() {
 		Ok(sync_result) => {
 			assert!(sync_result.is_err());
 			let error = sync_result.unwrap_err();
-			assert!(error.to_string().contains("Failed to query users from LDAP"));
-			if let Some(cause) = error.source() {
-				assert!(cause.to_string().contains("Binary values are not accepted"));
-				assert!(cause.to_string().contains("attribute `userSMIMECertificate`"));
-			} else {
-				panic!("Expected error to have a cause");
-			}
+			assert!(
+				error.chain().any(|e| e.to_string().contains("Failed to query users from LDAP"))
+			);
+			assert!(
+				error.chain().any(|e| e.to_string().contains("Binary values are not accepted"))
+			);
+			assert!(
+				error.chain().any(|e| e.to_string().contains("attribute `userSMIMECertificate`"))
+			);
 		}
 		Err(join_error) if join_error.is_panic() => {
 			panic!("perform_sync panicked unexpectedly: {}", join_error);

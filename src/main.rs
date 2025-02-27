@@ -1,7 +1,7 @@
 //! Tool for syncing different sources to Famedly's Zitadel
 use std::{path::Path, process::ExitCode, str::FromStr};
 
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use famedly_sync::{Config, perform_sync};
 use tracing::level_filters::LevelFilter;
 

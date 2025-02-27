@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use chrono::Utc;
 use reqwest::Client;
 use serde::Deserialize;
@@ -16,6 +16,7 @@ pub struct UktSource {
 	client: Client,
 }
 
+#[anyhow_trace::anyhow_trace]
 impl UktSource {
 	/// Create a new UKT source
 	pub fn new(ukt_config: UktSourceConfig) -> Self {

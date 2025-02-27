@@ -1,7 +1,7 @@
 //! This binary is used to migrate user IDs from base64 to hex encoding.
 use std::{path::Path, str::FromStr};
 
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use famedly_sync::{
 	Config, SkippedErrors,
 	user::{ExternalIdEncoding, User as SyncUser},
@@ -11,6 +11,7 @@ use futures::TryStreamExt;
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
+#[anyhow_trace::anyhow_trace]
 async fn main() -> Result<()> {
 	// Config
 	let config_path =

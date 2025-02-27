@@ -4,7 +4,7 @@ use std::{
 	path::Path,
 };
 
-use anyhow::{Result, bail};
+use anyhow_ext::{Result, bail};
 use serde::Deserialize;
 use url::Url;
 
@@ -41,6 +41,7 @@ pub struct SourcesConfig {
 	pub csv: Option<CsvSourceConfig>,
 }
 
+#[anyhow_trace::anyhow_trace]
 impl Config {
 	/// Create new config from file and env var
 	pub fn new(path: &Path) -> Result<Self> {
@@ -114,6 +115,7 @@ impl FeatureFlags {
 }
 
 /// Validate the Zitadel URL provided by Famedly
+#[anyhow_trace::anyhow_trace]
 fn validate_zitadel_url(url: Url) -> Result<Url> {
 	// If a URL contains a port, the domain name may appear as a
 	// scheme and pass through URL parsing despite lacking a scheme

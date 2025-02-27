@@ -2,7 +2,7 @@
 
 use std::{fs, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use async_trait::async_trait;
 use csv::Reader;
 use serde::Deserialize;
@@ -17,6 +17,7 @@ pub struct CsvSource {
 }
 
 #[async_trait]
+#[anyhow_trace::anyhow_trace]
 impl Source for CsvSource {
 	fn get_name(&self) -> &'static str {
 		"CSV"
@@ -29,6 +30,7 @@ impl Source for CsvSource {
 	}
 }
 
+#[anyhow_trace::anyhow_trace]
 impl CsvSource {
 	/// Create a new CSV source
 	pub fn new(csv_config: CsvSourceConfig) -> Self {
@@ -73,6 +75,7 @@ struct CsvData {
 	localpart: String,
 }
 
+#[anyhow_trace::anyhow_trace]
 impl CsvData {
 	/// Convert CsvData to User data
 	fn to_user(csv_data: CsvData) -> User {
@@ -99,7 +102,7 @@ impl CsvData {
 pub mod test_helpers {
 	use std::fs::write;
 
-	use anyhow::Result;
+	use anyhow_ext::Result;
 	use tempfile::NamedTempFile;
 
 	use crate::Config;
@@ -249,7 +252,7 @@ mod tests {
 		let result = csv.read_csv();
 		let error = result.expect_err("Expected error for invalid CSV data");
 		assert!(
-			error.to_string().contains("Failed to open CSV file"),
+			error.chain().any(|e| e.to_string().contains("Failed to open CSV file")),
 			"Unexpected error message: {:?}",
 			error
 		);

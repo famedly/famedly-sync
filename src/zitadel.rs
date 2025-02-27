@@ -1,7 +1,7 @@
 //! Helper functions for submitting data to Zitadel
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow_ext::{Context, Result, anyhow};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use futures::{Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,7 @@ pub struct Zitadel<'s> {
 	skipped_errors: &'s SkippedErrors,
 }
 
+#[anyhow_trace::anyhow_trace]
 impl<'s> Zitadel<'s> {
 	/// Construct the Zitadel instance
 	pub async fn new(
@@ -78,6 +79,7 @@ impl<'s> Zitadel<'s> {
 	}
 
 	/// Get a list of users by their email addresses
+	#[tracing::instrument(skip_all)]
 	pub fn get_users_by_email(
 		&self,
 		emails: Vec<String>,
@@ -105,6 +107,7 @@ impl<'s> Zitadel<'s> {
 	}
 
 	/// Return a stream of Zitadel users
+	#[tracing::instrument(skip_all)]
 	pub fn list_users(
 		&self,
 	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
@@ -400,22 +403,22 @@ impl<'s> Zitadel<'s> {
 			.zitadel_client
 			.get_user_metadata(&id, "localpart")
 			.await
-			.context(Skippable)
+			.pipe(|x| anyhow::Context::context(x, Skippable))
 			.with_context(|| format!("Fetching localpart metadata for {external_id:?} ({id})"))?
 			.metadata()
 			.value()
-			.context(Skippable)
+			.pipe(|x| anyhow::Context::context(x, Skippable))
 			.with_context(|| mk_err("localpart"))?;
 
 		let preferred_username = self
 			.zitadel_client
 			.get_user_metadata(&id, "preferred_username")
 			.await
-			.context(Skippable)
-			.with_context(|| format!("Fetching localpart metadata for {external_id} ({id})"))?
+			.pipe(|x| anyhow::Context::context(x, Skippable))
+			.with_context(|| format!("Fetching preferred username for {external_id} ({id})"))?
 			.metadata()
 			.value()
-			.context(Skippable)
+			.pipe(|x| anyhow::Context::context(x, Skippable))
 			.with_context(|| mk_err("preferred username"))?;
 
 		Ok((
@@ -441,10 +444,11 @@ struct Skippable;
 impl Skippable {
 	/// Helper function to use with `[StreamExt::filter_map]`
 	#[allow(clippy::unused_async)]
+	#[tracing::instrument(skip_all)]
 	pub async fn filter_out<T: Send>(res: Result<T>) -> Option<Result<T>> {
 		// should we `skipped_errors.notify_error()` here?
 		if let Err(e) = res.as_ref() {
-			if e.downcast_ref::<Skippable>().is_some() {
+			if e.is::<Skippable>() {
 				tracing::warn!("{e:?}");
 				return None;
 			}
@@ -458,6 +462,23 @@ impl std::fmt::Display for Skippable {
 		write!(f, "Skippable error")
 	}
 }
+
+/// TODO: add to `famedly-rust-utils`
+trait GenericCombinatorsExt {
+	/// We need this to call `anyhow::Context::context` method and not
+	/// `anyhow_ext::Context::context` as the latter serializes errors into
+	/// strings, and we need to do `anyhow::Error::is` ~
+	/// `anyhow::Error::downcast_ref` on nonserialized error marker
+	/// [Skippable]. This method is needed to not disrupt existing chains.
+	fn pipe<X>(self, f: impl Fn(Self) -> X) -> X
+	where
+		Self: Sized,
+	{
+		f(self)
+	}
+}
+
+impl<X> GenericCombinatorsExt for X {}
 
 /// Helper trait for skippable zitadel errors to use with `[SkippedErrors]`
 pub trait SkipableZitadelResult<X: Send> {

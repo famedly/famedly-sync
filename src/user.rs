@@ -1,5 +1,5 @@
 //! User data helpers
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use base64::{Engine as _, engine::general_purpose};
 use uuid::{Uuid, uuid};
 

@@ -1,7 +1,7 @@
 //! Sync tool between other sources and our infrastructure based on Zitadel.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::{Context, Result};
+use anyhow_ext::{Context, Result};
 use futures::{StreamExt, TryStreamExt};
 use user::User;
 use zitadel::{SkipableZitadelResult, Zitadel};
@@ -21,6 +21,7 @@ pub use sources::{
 };
 
 /// Perform a sync operation
+#[anyhow_trace::anyhow_trace]
 pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	/// Get users from a source
 	async fn get_users_from_source(source: impl Source + Send) -> Result<VecDeque<User>> {
@@ -44,7 +45,7 @@ pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	// the others
 	if let Some(ukt) = ukt {
 		match ukt.get_removed_user_emails().await {
-			Ok(users) => delete_users_by_email(&zitadel, &skipped_errors, users).await?,
+			Ok(users) => delete_users_by_email(&zitadel, users).await?,
 			Err(err) => {
 				anyhow::bail!("Failed to query users from ukt: {:?}", err);
 			}
@@ -63,7 +64,7 @@ pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	};
 
 	if deactivate_only {
-		disable_users(&zitadel, &skipped_errors, &mut users).await?;
+		disable_users(&zitadel, &mut users).await?;
 	} else {
 		sync_users(&zitadel, &skipped_errors, &mut users).await?;
 	}
@@ -72,18 +73,17 @@ pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 }
 
 /// Delete a list of users given their email addresses
+#[anyhow_trace::anyhow_trace]
 async fn delete_users_by_email(
 	zitadel: &Zitadel<'_>,
-	skipped_errors: &SkippedErrors,
+	// skipped_errors: &SkippedErrors,
 	emails: Vec<String>,
 ) -> Result<()> {
 	zitadel
 		.get_users_by_email(emails)?
 		.try_for_each_concurrent(Some(4), async |(zitadel_id, _)| {
-			zitadel
-				.delete_user(&zitadel_id)
-				.await
-				.skip_zitadel_error("deleting user", skipped_errors);
+			zitadel.delete_user(&zitadel_id).await?;
+			// .skip_zitadel_error("deleting user", skipped_errors);
 			Ok(())
 		})
 		.await?;
@@ -93,9 +93,10 @@ async fn delete_users_by_email(
 
 /// Only disable users
 #[tracing::instrument(skip_all)]
+#[anyhow_trace::anyhow_trace]
 async fn disable_users(
 	zitadel: &Zitadel<'_>,
-	skipped_errors: &SkippedErrors,
+	// skipped_errors: &SkippedErrors,
 	users: &mut VecDeque<User>,
 ) -> Result<()> {
 	// We only care about disabled users for this flow
@@ -107,10 +108,8 @@ async fn disable_users(
 		if users.front().map(|user| user.external_user_id.clone())
 			== Some(zitadel_user.external_user_id)
 		{
-			zitadel
-				.delete_user(&zitadel_id)
-				.await
-				.skip_zitadel_error("deleting user", skipped_errors);
+			zitadel.delete_user(&zitadel_id).await?;
+			// .skip_zitadel_error("deleting user", skipped_errors);
 			users.pop_front();
 		}
 	}
@@ -119,6 +118,7 @@ async fn disable_users(
 }
 
 /// Fully sync users
+#[anyhow_trace::anyhow_trace]
 #[tracing::instrument(skip_all)]
 async fn sync_users(
 	zitadel: &Zitadel<'_>,
