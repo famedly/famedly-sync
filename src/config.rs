@@ -246,6 +246,8 @@ mod tests {
 		assert!(config.is_ok(), "Invalid config: {:?}", config);
 		let config = Config::new(Path::new("./sample-configs/ukt-config.sample.yaml"));
 		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		let config = Config::new(Path::new("./sample-configs/ad-config.sample.yaml"));
+		assert!(config.is_ok(), "Invalid config: {:?}", config);
 	}
 
 	#[test]

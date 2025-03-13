@@ -1,0 +1,97 @@
+zitadel:
+  # The Famedly user endpoint to sync to.
+  url: https://auth.famedly.de
+  # The Famedly-provided service user credentials.
+  key_file: /opt/famedly-sync/service-user.json
+  # The organization whose users to sync.
+  organization_id: 000000000000000000
+  # The project to grant users access to.
+  project_id: 000000000000000000
+  # The identity provider ID to enable SSO login for
+  idp_id: 000000000000000000
+
+feature_flags:
+  - verify_email      # Whether to ask users to verify their email addresses post sync
+  - verify_phone      # Whether to ask users to verify their phone numbers post sync
+  # - sso_login       # Whether to enable SSO login - Please note that his has some drawbacks and limitations, see the help center article for more information
+  # - dry_run         # Disable syncing users to Zitadel - Intended to ensure syncs are working before productive deployment
+  # - deactivate_only # Only deactivate users, do not create or update them.
+
+# Configuration for the sources to sync from.
+sources:
+  # Configuration for the LDAP source. Using caching, LDAP source checks for new, updated, and deleted users in the LDAP server.
+  ldap:
+    # The URl of the ldap server to be synced.
+    # Using `ldaps` as the scheme will enable TLS.
+    url: ldap://ldap.example.invalid
+    # The base DN whose users to sync.
+    base_dn: ou=testorg,dc=example,dc=org
+    # The DN to bind - this should be a user with sufficient permissions
+    # to read the above DN.
+    bind_dn: cn=admin,dc=example,dc=org
+    # The password of the bound user.
+    bind_password: adminpassword
+    # The LDAP filter to identify user entries.
+    user_filter: "(memberOf=cn=App)"
+    # The LDAP connection timeout
+    timeout: 5
+    # Whether to sync entry deletion.
+    check_for_deleted_entries: true
+    # Whether to filter for the specific attributes used. Some LDAP
+    # implementations misbehave if this is not done, others misbehave if
+    # it is done.
+    #
+    # Default is false.
+    use_attribute_filter: true
+    # A mapping of the LDAP attributes to Famedly attributes. This is
+    # different for different LDAP server implementations and
+    # organizations, so needs to be configured on a case-by-case basis.
+    #
+    # This sample configuration is for a reasonably standard OpenLDAP
+    # implementation.
+    attributes:
+      first_name: "givenName"
+      last_name: "sn"
+      preferred_username: "displayName"
+      email: "mail"
+      user_id:
+        # This is the generic ID used in AD. It will be unique and
+        # unchangeable, which is what we need for this attribute.
+        name: "objectGUID"
+        # The objectGUID is a binary value. Binary values can be
+        # identified in `ldapsearch` by the fact that their key is
+        # separated from the value with two `::` instead of the usual
+        # `:`.
+        is_binary: true
+      # Status flag for the user. This is read as a big-endian
+      # integer, and compared against the bitmasks in
+      # `disable_bitmasks` to see if the user should be treated as
+      # disabled.
+      status: "userAccountControl"
+      # Vector of bitmasks that marks the user as disabled. Tested on status.
+      # (for example ACCOUNTDISABLE=0x2 and LOCKOUT=0x10 in AD)
+      # Decimal (or hex) representation of the specific flag mask
+      #
+      # Microsoft define the meaning of their bits here:
+      # https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties#list-of-property-flags
+      disable_bitmasks: [0x2,0x10]
+      # Phone numbers are the only optional attribute, if a user does
+      # not have a phone number this will be silently ignored
+      phone: "telephoneNumber"
+
+    # TLS config is optional, and only needs to be set if TLS is needed
+    tls:
+      # The client TLS key/certificate. If both this and the certificate
+      # are unset, the client will not send any certificates.
+      client_key: ./tests/environment/certs/client.key
+      client_certificate: ./tests/environment/certs/client.crt
+      # Path to the LDAP server's root certificate. If unset, only the
+      # host's default certificates will be used to verify the server.
+      server_certificate: ./tests/environment/certs/server.crt
+      # Disable root certificate verification - should only be used in
+      # testing.
+      danger_disable_tls_verify: false
+      # Whether to use STARTTLS to start the TLS connection - this is not
+      # needed with the `ldaps` scheme, as the server will already be
+      # hosting TLS.
+      danger_use_start_tls: false
