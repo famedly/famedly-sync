@@ -141,7 +141,8 @@ impl LdapSource {
 			&entry,
 			&self.ldap_config.attributes.preferred_username,
 			&ldap_user_id,
-		)?;
+		)
+		.ok();
 		let email = read_string_entry(&entry, &self.ldap_config.attributes.email, &ldap_user_id)?;
 		let phone =
 			read_string_entry(&entry, &self.ldap_config.attributes.phone, &ldap_user_id).ok();
@@ -538,10 +539,9 @@ mod tests {
 		let user = result.unwrap();
 		assert_eq!(user.first_name, "Test");
 		assert_eq!(user.last_name, "User");
-		assert_eq!(user.preferred_username, "testuser".to_owned());
+		assert_eq!(user.preferred_username, Some("testuser".to_owned()));
 		assert_eq!(user.email, "testuser@example.com");
 		assert_eq!(user.phone, Some("123456789".to_owned()));
-		assert_eq!(user.preferred_username, "testuser".to_owned());
 		assert_eq!(user.external_user_id, hex::encode("testuser"));
 		assert!(user.enabled);
 	}

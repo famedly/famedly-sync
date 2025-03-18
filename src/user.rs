@@ -26,7 +26,7 @@ pub fn compute_famedly_uuid(external_id: &[u8]) -> String {
 }
 
 /// Source-agnostic representation of a user
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct User {
 	/// The user's first name
 	pub(crate) first_name: String,
@@ -39,7 +39,7 @@ pub struct User {
 	/// Whether the user is enabled
 	pub(crate) enabled: bool,
 	/// The user's preferred username
-	pub(crate) preferred_username: String,
+	pub(crate) preferred_username: Option<String>,
 	/// The user's external (non-Zitadel) ID
 	pub(crate) external_user_id: String,
 	/// The user's localpart (used as Zitadel userId)
@@ -55,7 +55,7 @@ impl User {
 		email: String,
 		phone: Option<String>,
 		enabled: bool,
-		preferred_username: String,
+		preferred_username: Option<String>,
 		external_user_id: String,
 		localpart: String,
 	) -> Self {
@@ -183,19 +183,6 @@ impl User {
 		};
 
 		Ok(Self { external_user_id: new_external_id, ..self.clone() })
-	}
-}
-
-impl PartialEq for User {
-	fn eq(&self, other: &Self) -> bool {
-		self.first_name == other.first_name
-			&& self.last_name == other.last_name
-			&& self.email == other.email
-			&& self.phone == other.phone
-			&& self.enabled == other.enabled
-			&& self.preferred_username == other.preferred_username
-			&& self.external_user_id == other.external_user_id
-			&& self.localpart == other.localpart
 	}
 }
 

@@ -90,7 +90,7 @@ impl CsvData {
 			first_name: csv_data.first_name,
 			last_name: csv_data.last_name,
 			phone: if csv_data.phone.is_empty() { None } else { Some(csv_data.phone) },
-			preferred_username: csv_data.email.clone(),
+			preferred_username: Some(csv_data.email.clone()),
 			external_user_id: hex::encode(csv_data.email),
 			enabled: true,
 			localpart,

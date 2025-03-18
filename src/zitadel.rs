@@ -203,10 +203,12 @@ impl<'s> Zitadel<'s> {
 
 		let mut metadata =
 			vec![SetMetadataEntry::new("localpart".to_owned(), imported_user.localpart.clone())];
-		metadata.push(SetMetadataEntry::new(
-			"preferred_username".to_owned(),
-			imported_user.preferred_username.clone(),
-		));
+		if let Some(preferred_username) = &imported_user.preferred_username {
+			metadata.push(SetMetadataEntry::new(
+				"preferred_username".to_owned(),
+				preferred_username.clone(),
+			));
+		}
 
 		let mut user = AddHumanUserRequest::new(
 			SetHumanProfile::new(imported_user.first_name.clone(), imported_user.last_name.clone())
@@ -356,13 +358,13 @@ impl<'s> Zitadel<'s> {
 		};
 
 		if old_user.preferred_username != updated_user.preferred_username {
-			self.zitadel_client
-				.set_user_metadata(
-					zitadel_id,
-					"preferred_username",
-					&updated_user.preferred_username.clone(),
-				)
-				.await?;
+			if let Some(preferred_username) = &updated_user.preferred_username {
+				self.zitadel_client
+					.set_user_metadata(zitadel_id, "preferred_username", preferred_username)
+					.await?;
+			} else {
+				self.zitadel_client.delete_user_metadata(zitadel_id, "preferred_username").await?;
+			}
 		}
 
 		Ok(())
@@ -414,12 +416,8 @@ impl<'s> Zitadel<'s> {
 			.zitadel_client
 			.get_user_metadata(&id, "preferred_username")
 			.await
-			.pipe(|x| anyhow::Context::context(x, Skippable))
-			.with_context(|| format!("Fetching preferred username for {external_id} ({id})"))?
-			.metadata()
-			.value()
-			.pipe(|x| anyhow::Context::context(x, Skippable))
-			.with_context(|| mk_err("preferred username"))?;
+			.ok()
+			.and_then(|res| res.metadata().value());
 
 		Ok((
 			id,
