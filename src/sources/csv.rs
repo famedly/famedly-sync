@@ -8,7 +8,8 @@ use csv::Reader;
 use serde::Deserialize;
 
 use super::Source;
-use crate::user::{self, User};
+use crate::user::{self, Required, User as UserModel};
+type User = UserModel<Required>;
 
 /// CSV Source
 pub struct CsvSource {

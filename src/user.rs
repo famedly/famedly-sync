@@ -25,9 +25,33 @@ pub fn compute_famedly_uuid(external_id: &[u8]) -> String {
 	Uuid::new_v5(&FAMEDLY_NAMESPACE, external_id).to_string()
 }
 
+/// Helper trait (type function) to have to copies for `User` type: for
+/// `[Required]` and `[Optional]`. `O::T<X>` should be used in fields that in
+/// one case are required while in other are optional.
+pub trait Optionable: Clone {
+	/// Result of the type function
+	type T<X: Clone>: Clone;
+}
+
+/// `[Optionable]` impl that returns the input type as is.
+#[derive(Clone)]
+#[allow(missing_debug_implementations)]
+pub struct Required;
+impl Optionable for Required {
+	type T<X: Clone> = X;
+}
+
+/// `[Optionable]` impl that wraps the input type in `[Option]`.
+#[derive(Clone)]
+#[allow(missing_debug_implementations)]
+pub struct Optional;
+impl Optionable for Optional {
+	type T<X: Clone> = Option<X>;
+}
+
 /// Source-agnostic representation of a user
 #[derive(Clone)]
-pub struct User {
+pub struct User<O: Optionable> {
 	/// The user's first name
 	pub(crate) first_name: String,
 	/// The user's last name
@@ -39,14 +63,45 @@ pub struct User {
 	/// Whether the user is enabled
 	pub(crate) enabled: bool,
 	/// The user's preferred username
-	pub(crate) preferred_username: String,
+	pub(crate) preferred_username: O::T<String>,
 	/// The user's external (non-Zitadel) ID
 	pub(crate) external_user_id: String,
 	/// The user's localpart (used as Zitadel userId)
 	pub(crate) localpart: String,
 }
 
-impl User {
+impl User<Optional> {
+	/// `[Eq]` alternative to check for equality `User<Optional>` and
+	/// `User<Required>`.
+	pub fn is_up_to_date(&self, new_user_data: &User<Required>) -> bool {
+		self.first_name == new_user_data.first_name
+			&& self.last_name == new_user_data.last_name
+			&& self.email == new_user_data.email
+			&& self.phone == new_user_data.phone
+			&& self.enabled == new_user_data.enabled
+			&& self.preferred_username.as_ref() == Some(&new_user_data.preferred_username)
+			&& self.external_user_id == new_user_data.external_user_id
+			&& self.localpart == new_user_data.localpart
+	}
+}
+
+impl User<Required> {
+	/// Make `User` with optional fields out of `User` with strict fields.
+	pub fn to_optional(self) -> User<Optional> {
+		User {
+			first_name: self.first_name,
+			last_name: self.last_name,
+			email: self.email,
+			phone: self.phone,
+			enabled: self.enabled,
+			preferred_username: Some(self.preferred_username),
+			external_user_id: self.external_user_id,
+			localpart: self.localpart,
+		}
+	}
+}
+
+impl<O: Optionable> User<O> {
 	/// Create a new user instance, used in tests
 	#[allow(clippy::must_use_candidate, clippy::too_many_arguments)]
 	pub fn new(
@@ -55,7 +110,7 @@ impl User {
 		email: String,
 		phone: Option<String>,
 		enabled: bool,
-		preferred_username: String,
+		preferred_username: O::T<String>,
 		external_user_id: String,
 		localpart: String,
 	) -> Self {
@@ -103,7 +158,7 @@ impl User {
 	pub fn create_user_with_converted_external_id(
 		&self,
 		expected_encoding: ExternalIdEncoding,
-	) -> Result<User> {
+	) -> Result<Self> {
 		// Double check the encoding
 		let detected_encoding = match &self.external_user_id {
 			s if s.is_empty() => {
@@ -186,20 +241,7 @@ impl User {
 	}
 }
 
-impl PartialEq for User {
-	fn eq(&self, other: &Self) -> bool {
-		self.first_name == other.first_name
-			&& self.last_name == other.last_name
-			&& self.email == other.email
-			&& self.phone == other.phone
-			&& self.enabled == other.enabled
-			&& self.preferred_username == other.preferred_username
-			&& self.external_user_id == other.external_user_id
-			&& self.localpart == other.localpart
-	}
-}
-
-impl std::fmt::Debug for User {
+impl<O: Optionable> std::fmt::Debug for User<O> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		f.debug_struct("User")
 			.field("first_name", &"***")

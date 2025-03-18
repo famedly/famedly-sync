@@ -7,7 +7,7 @@ pub mod csv;
 pub mod ldap;
 pub mod ukt;
 
-use crate::user::User;
+use crate::user::{Required, User};
 
 /// A source of data we want to sync from.
 #[async_trait]
@@ -27,5 +27,5 @@ pub trait Source {
 	// TODO: If we do get sources which *do* support sorting, and Rust
 	// gains this feature, we should probably switch to a stream here,
 	// though (and update existing sources to return sorted streams).
-	async fn get_sorted_users(&self) -> Result<Vec<User>>;
+	async fn get_sorted_users(&self) -> Result<Vec<User<Required>>>;
 }

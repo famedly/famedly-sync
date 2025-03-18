@@ -24,7 +24,11 @@ use zitadel_rust_client::{
 	},
 };
 
-use crate::{FeatureFlag, SkippedErrors, config::FeatureFlags, user::User};
+use crate::{
+	FeatureFlag, SkippedErrors,
+	config::FeatureFlags,
+	user::{Optional, Required, User},
+};
 
 /// Zitadel user ID alias
 pub type ZitadelUserId = String;
@@ -83,7 +87,7 @@ impl<'s> Zitadel<'s> {
 	pub fn get_users_by_email(
 		&self,
 		emails: Vec<String>,
-	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
+	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User<Optional>)>> + Send + use<'_>> {
 		Ok(self
 			.zitadel_client
 			.list_users(
@@ -110,7 +114,7 @@ impl<'s> Zitadel<'s> {
 	#[tracing::instrument(skip_all)]
 	pub fn list_users(
 		&self,
-	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
+	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User<Optional>)>> + Send + use<'_>> {
 		Ok(self
 			.zitadel_client
 			.list_users(
@@ -161,7 +165,7 @@ impl<'s> Zitadel<'s> {
 
 	/// Return a vector of a random sample of Zitadel users
 	/// We use this to determine the encoding of the external IDs
-	pub async fn get_users_sample(&self) -> Result<Vec<User>> {
+	pub async fn get_users_sample(&self) -> Result<Vec<User<Optional>>> {
 		self.zitadel_client
 			.list_users(
 				Some(PaginationParams::DEFAULT.with_asc(true).with_page_size(USER_SAMPLE_SIZE)),
@@ -193,7 +197,7 @@ impl<'s> Zitadel<'s> {
 	}
 
 	/// Import a user into Zitadel
-	pub async fn import_user(&self, imported_user: &User) -> Result<()> {
+	pub async fn import_user(&self, imported_user: &User<Required>) -> Result<()> {
 		tracing::info!("Importing user with external ID: {}", imported_user.external_user_id);
 
 		if self.feature_flags.is_enabled(FeatureFlag::DryRun) {
@@ -201,12 +205,13 @@ impl<'s> Zitadel<'s> {
 			return Ok(());
 		}
 
-		let mut metadata =
-			vec![SetMetadataEntry::new("localpart".to_owned(), imported_user.localpart.clone())];
-		metadata.push(SetMetadataEntry::new(
-			"preferred_username".to_owned(),
-			imported_user.preferred_username.clone(),
-		));
+		let metadata = vec![
+			SetMetadataEntry::new("localpart".to_owned(), imported_user.localpart.clone()),
+			SetMetadataEntry::new(
+				"preferred_username".to_owned(),
+				imported_user.preferred_username.clone(),
+			),
+		];
 
 		let mut user = AddHumanUserRequest::new(
 			SetHumanProfile::new(imported_user.first_name.clone(), imported_user.last_name.clone())
@@ -277,8 +282,8 @@ impl<'s> Zitadel<'s> {
 	pub async fn update_user(
 		&self,
 		zitadel_id: &str,
-		old_user: &User,
-		updated_user: &User,
+		old_user: &User<Optional>,
+		updated_user: &User<Optional>, // this is optional only for migrate binary
 	) -> Result<()> {
 		tracing::info!(
 			"Updating user `{}` to `{}`",
@@ -355,21 +360,26 @@ impl<'s> Zitadel<'s> {
 			}
 		};
 
-		if old_user.preferred_username != updated_user.preferred_username {
-			self.zitadel_client
-				.set_user_metadata(
-					zitadel_id,
-					"preferred_username",
-					&updated_user.preferred_username.clone(),
-				)
-				.await?;
+		if let Some(preferred_username) = &updated_user.preferred_username {
+			if old_user.preferred_username != updated_user.preferred_username {
+				self.zitadel_client
+					.set_user_metadata(
+						zitadel_id,
+						"preferred_username",
+						&preferred_username.clone(),
+					)
+					.await?;
+			}
 		}
 
 		Ok(())
 	}
 
 	/// Convert a Zitadel search result to a user
-	async fn search_result_to_user(&self, user: ZitadelUser) -> Result<(ZitadelUserId, User)> {
+	async fn search_result_to_user(
+		&self,
+		user: ZitadelUser,
+	) -> Result<(ZitadelUserId, User<Optional>)> {
 		let id = user.user_id().context("Missing Zitadel user ID")?.clone();
 		let human_user = user.human().context("Machine user found in human user search")?;
 		let external_id = human_user
@@ -410,16 +420,19 @@ impl<'s> Zitadel<'s> {
 			.pipe(|x| anyhow::Context::context(x, Skippable))
 			.with_context(|| mk_err("localpart"))?;
 
-		let preferred_username = self
-			.zitadel_client
-			.get_user_metadata(&id, "preferred_username")
-			.await
-			.pipe(|x| anyhow::Context::context(x, Skippable))
-			.with_context(|| format!("Fetching preferred username for {external_id} ({id})"))?
-			.metadata()
-			.value()
-			.pipe(|x| anyhow::Context::context(x, Skippable))
-			.with_context(|| mk_err("preferred username"))?;
+		let preferred_username = (async || {
+			self.zitadel_client
+				.get_user_metadata(&id, "preferred_username")
+				.await
+				.pipe(|x| anyhow::Context::context(x, Skippable))
+				.with_context(|| format!("Fetching preferred username for {external_id} ({id})"))?
+				.metadata()
+				.value()
+				.pipe(|x| anyhow::Context::context(x, Skippable))
+				.with_context(|| mk_err("preferred username"))
+		})()
+		.await
+		.ok();
 
 		Ok((
 			id,

@@ -11,7 +11,9 @@ use serde::Deserialize;
 use url::Url;
 
 use super::Source;
-use crate::user::{self, User};
+use crate::user::{self, Required, User as UserModel};
+
+type User = UserModel<Required>;
 
 /// LDAP sync source
 pub struct LdapSource {

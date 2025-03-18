@@ -4,11 +4,13 @@ use std::{path::Path, str::FromStr};
 use anyhow_ext::{Context, Result};
 use famedly_sync::{
 	Config, SkippedErrors,
-	user::{ExternalIdEncoding, User as SyncUser},
+	user::{ExternalIdEncoding, Optional, User as UserModel},
 	zitadel::Zitadel as SyncZitadel,
 };
 use futures::TryStreamExt;
 use tracing::level_filters::LevelFilter;
+
+type SyncUser = UserModel<Optional>;
 
 #[tokio::main]
 #[anyhow_trace::anyhow_trace]

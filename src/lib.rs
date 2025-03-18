@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow_ext::{Context, Result};
 use futures::{StreamExt, TryStreamExt};
-use user::User;
+use user::{Optionable, Required, User};
 use zitadel::{SkipableZitadelResult, Zitadel};
 
 mod config;
@@ -24,7 +24,7 @@ pub use sources::{
 #[anyhow_trace::anyhow_trace]
 pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	/// Get users from a source
-	async fn get_users_from_source(source: impl Source + Send) -> Result<VecDeque<User>> {
+	async fn get_users_from_source(source: impl Source + Send) -> Result<VecDeque<User<Required>>> {
 		source
 			.get_sorted_users()
 			.await
@@ -94,10 +94,10 @@ async fn delete_users_by_email(
 /// Only disable users
 #[tracing::instrument(skip_all)]
 #[anyhow_trace::anyhow_trace]
-async fn disable_users(
+async fn disable_users<O: Optionable>(
 	zitadel: &Zitadel<'_>,
 	// skipped_errors: &SkippedErrors,
-	users: &mut VecDeque<User>,
+	users: &mut VecDeque<User<O>>,
 ) -> Result<()> {
 	// We only care about disabled users for this flow
 	users.retain(|user| !user.enabled);
@@ -123,7 +123,7 @@ async fn disable_users(
 async fn sync_users(
 	zitadel: &Zitadel<'_>,
 	skipped_errors: &SkippedErrors,
-	sync_users: &mut VecDeque<User>,
+	sync_users: &mut VecDeque<User<Required>>,
 ) -> Result<()> {
 	// Treat any disabled users as deleted, so we simply pretend they
 	// are not in the list
@@ -177,7 +177,9 @@ async fn sync_users(
 
 			// If the sync source user matches the Zitadel user, the
 			// user is already synced and we can move on
-			(Some(new_user), Some((_, existing_user))) if new_user == existing_user => {
+			(Some(new_user), Some((_, existing_user)))
+				if existing_user.is_up_to_date(&new_user) =>
+			{
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();
 			}
@@ -225,7 +227,7 @@ async fn sync_users(
 				if new_user.external_user_id == existing_user.external_user_id =>
 			{
 				zitadel
-					.update_user(&zitadel_id, &existing_user, &new_user)
+					.update_user(&zitadel_id, &existing_user, &new_user.clone().to_optional())
 					.await
 					.with_context(|| {
 						format!("Failed to update user `{}`", new_user.external_user_id,)
