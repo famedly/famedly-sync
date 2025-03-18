@@ -207,7 +207,7 @@ fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Resul
 			})
 			.map(StringOrBytes::Bytes),
 	}
-	.ok_or(anyhow!("missing `{}` values for `{}`", attribute, entry.dn))
+	.with_context(|| format!("missing `{}` values for `{}`", attribute, entry.dn))
 }
 
 /// LDAP-specific configuration
