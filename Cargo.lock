@@ -802,7 +802,6 @@ dependencies = [
  "test-log",
  "tokio",
  "tokio-stream",
- "tonic",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -4425,7 +4424,7 @@ dependencies = [
 [[package]]
 name = "zitadel-rust-client"
 version = "0.3.0"
-source = "git+https://github.com/famedly/zitadel-rust-client?tag=v0.3.0#82995e7dc7f25c3b574e4fb5a521f518ce098285"
+source = "git+https://github.com/famedly/zitadel-rust-client#f5d604ecac2002934a8b6f83f0938953f85ac15e"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

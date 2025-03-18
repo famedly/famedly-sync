@@ -1,26 +1,23 @@
 //! Helper functions for submitting data to Zitadel
 use std::path::PathBuf;
 
-use anyhow_ext::{Context, Result, anyhow};
+use anyhow_ext::{Context, Result};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use futures::{Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use url::Url;
-use zitadel_rust_client::{
-	v1::Zitadel as ZitadelClientV1,
-	v2::{
-		Zitadel as ZitadelClient,
-		management::{
-			V1UserGrantProjectIdQuery, V1UserGrantQuery, V1UserGrantRoleKeyQuery,
-			V1UserGrantUserIdQuery,
-		},
-		pagination::PaginationParams,
-		users::{
-			AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, Organization,
-			OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone, SetHumanProfile,
-			SetMetadataEntry, TypeQuery, UpdateHumanUserRequest, User as ZitadelUser,
-			UserFieldName, Userv2Type,
-		},
+use zitadel_rust_client::v2::{
+	Zitadel as ZitadelClient,
+	management::{
+		V1UserGrantProjectIdQuery, V1UserGrantQuery, V1UserGrantRoleKeyQuery,
+		V1UserGrantUserIdQuery,
+	},
+	pagination::PaginationParams,
+	users::{
+		AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, Organization,
+		OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone, SetHumanProfile,
+		SetMetadataEntry, TypeQuery, UpdateHumanUserRequest, User as ZitadelUser, UserFieldName,
+		Userv2Type,
 	},
 };
 
@@ -44,9 +41,6 @@ pub struct Zitadel<'s> {
 	feature_flags: FeatureFlags,
 	/// The backing Zitadel zitadel_client
 	pub zitadel_client: ZitadelClient,
-	/// The backing Ztiadel client, but for v1 API requests - some are
-	/// still required since the v2 API doesn't cover everything
-	zitadel_client_v1: ZitadelClientV1,
 	/// Skipped errors tracker
 	skipped_errors: &'s SkippedErrors,
 }
@@ -64,18 +58,7 @@ impl<'s> Zitadel<'s> {
 				.await
 				.context("failed to configure zitadel_client")?;
 
-		let zitadel_client_v1 =
-			ZitadelClientV1::new(zitadel_config.url.clone(), zitadel_config.key_file.clone())
-				.await
-				.context("failed to configure zitadel_client_v1")?;
-
-		Ok(Self {
-			zitadel_config,
-			feature_flags,
-			zitadel_client,
-			zitadel_client_v1,
-			skipped_errors,
-		})
+		Ok(Self { zitadel_config, feature_flags, zitadel_client, skipped_errors })
 	}
 
 	/// Get a list of users by their email addresses
@@ -252,21 +235,20 @@ impl<'s> Zitadel<'s> {
 
 		match self.zitadel_client.create_human_user(user.clone()).await {
 			Ok(res) => {
-				let id = res
-					.user_id()
-					.ok_or(anyhow!(
+				let id = res.user_id().with_context(|| {
+					format!(
 						"Failed to create user ID for external user `{}`",
 						imported_user.external_user_id
-					))?
-					.clone();
+					)
+				})?;
 
-				self.zitadel_client_v1
+				self.zitadel_client
 					.add_user_grant(
 						Some(self.zitadel_config.organization_id.clone()),
 						id,
 						self.zitadel_config.project_id.clone(),
 						None,
-						vec![FAMEDLY_USER_ROLE.to_owned()],
+						Some(vec![FAMEDLY_USER_ROLE.to_owned()]),
 					)
 					.await?;
 			}
