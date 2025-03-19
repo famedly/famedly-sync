@@ -172,11 +172,7 @@ mod tests {
 			serde_yaml::Value::Number(value) => value.to_string(),
 			serde_yaml::Value::String(value) => value.clone(),
 			serde_yaml::Value::Sequence(arr) => {
-				let mut values: Vec<String> = Vec::new();
-				for value in arr {
-					values.push(get_string(value));
-				}
-				values.join(ENV_VAR_LIST_SEP)
+				arr.iter().map(get_string).collect::<Vec<_>>().join(ENV_VAR_LIST_SEP)
 			}
 			_ => "".to_owned(),
 		}
