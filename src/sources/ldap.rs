@@ -160,21 +160,15 @@ impl LdapSource {
 	}
 }
 
-/// Read an an attribute, but assert that it is a string
+/// Read a string attribute
 #[anyhow_trace::anyhow_trace]
-fn read_string_entry(
-	entry: &SearchEntry,
-	attribute: &AttributeMapping,
-	id: &str,
-) -> Result<String> {
-	match read_search_entry(entry, attribute)? {
-		StringOrBytes::String(entry) => Ok(entry),
-		StringOrBytes::Bytes(_) => Err(anyhow!(
-			"Binary values are not accepted: attribute `{}` of user `{}`",
-			attribute,
-			id
-		)),
-	}
+fn read_string_entry(entry: &SearchEntry, attr_name: &str, id: &str) -> Result<String> {
+	entry.attrs.get(attr_name).and_then(|entry| entry.first()).cloned().with_context(|| {
+		format!(
+			"either no or only binary values were returned for attribute {} of user {id} {}",
+			attr_name, entry.dn
+		)
+	})
 }
 
 /// Read an attribute from the entry
@@ -310,15 +304,15 @@ impl TryFrom<LdapSourceConfig> for LdapConnSettings {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LdapAttributesMapping {
 	/// Attribute for the user's first name
-	pub first_name: AttributeMapping,
+	pub first_name: String,
 	/// Attribute for the user's last name
-	pub last_name: AttributeMapping,
+	pub last_name: String,
 	/// Attribute for the user's preferred username
-	pub preferred_username: AttributeMapping,
+	pub preferred_username: String,
 	/// Attribute for the user's email address
-	pub email: AttributeMapping,
+	pub email: String,
 	/// Attribute for the user's phone number
-	pub phone: AttributeMapping,
+	pub phone: String,
 	/// Attribute for the user's unique ID
 	pub user_id: AttributeMapping,
 	/// This attribute shows the account status (It expects an i32 like
@@ -339,11 +333,11 @@ impl LdapAttributesMapping {
 	/// get back.
 	fn get_attribute_list(self) -> Vec<String> {
 		let mut attrs = vec![
-			self.first_name.get_name(),
-			self.last_name.get_name(),
-			self.preferred_username.get_name(),
-			self.email.get_name(),
-			self.phone.get_name(),
+			self.first_name.clone(),
+			self.last_name.clone(),
+			self.preferred_username.clone(),
+			self.email.clone(),
+			self.phone.clone(),
 			self.user_id.get_name(),
 			self.status.get_name(),
 		];
