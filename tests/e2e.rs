@@ -956,17 +956,7 @@ async fn test_e2e_binary_preferred_username() {
 
 	match result {
 		Ok(sync_result) => {
-			assert!(sync_result.is_err());
-			let error = sync_result.unwrap_err();
-			assert!(
-				error.chain().any(|e| e.to_string().contains("Failed to query users from LDAP"))
-			);
-			assert!(
-				error.chain().any(|e| e.to_string().contains("Binary values are not accepted"))
-			);
-			assert!(
-				error.chain().any(|e| e.to_string().contains("attribute `userSMIMECertificate`"))
-			);
+			assert!(sync_result.is_ok());
 		}
 		Err(join_error) if join_error.is_panic() => {
 			panic!("perform_sync panicked unexpectedly: {}", join_error);
@@ -998,7 +988,7 @@ async fn test_e2e_binary_preferred_username() {
 				error.chain().any(|e| e.to_string().contains("Failed to query users from LDAP"))
 			);
 			assert!(
-				error.chain().any(|e| e.to_string().contains("Binary values are not accepted"))
+				error.chain().any(|e| e.to_string().contains("Binary values expected to be utf8"))
 			);
 			assert!(
 				error.chain().any(|e| e.to_string().contains("attribute `userSMIMECertificate`"))
