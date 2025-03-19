@@ -137,15 +137,14 @@ impl LdapSource {
 			read_string_entry(&entry, &self.ldap_config.attributes.first_name, &ldap_user_id)?;
 		let last_name =
 			read_string_entry(&entry, &self.ldap_config.attributes.last_name, &ldap_user_id)?;
-		let preferred_username = read_string_entry(
+		let preferred_username = read_string_entry_opt(
 			&entry,
 			&self.ldap_config.attributes.preferred_username,
 			&ldap_user_id,
-		)
-		.ok();
+		)?;
 		let email = read_string_entry(&entry, &self.ldap_config.attributes.email, &ldap_user_id)?;
 		let phone =
-			read_string_entry(&entry, &self.ldap_config.attributes.phone, &ldap_user_id).ok();
+			read_string_entry_opt(&entry, &self.ldap_config.attributes.phone, &ldap_user_id)?;
 
 		Ok(User {
 			first_name,
@@ -160,7 +159,7 @@ impl LdapSource {
 	}
 }
 
-/// Read an an attribute, but assert that it is a string
+/// Read an attribute, but assert that it is a string
 #[anyhow_trace::anyhow_trace]
 fn read_string_entry(
 	entry: &SearchEntry,
@@ -169,12 +168,31 @@ fn read_string_entry(
 ) -> Result<String> {
 	match read_search_entry(entry, attribute)? {
 		StringOrBytes::String(entry) => Ok(entry),
-		StringOrBytes::Bytes(_) => Err(anyhow!(
-			"Binary values are not accepted: attribute `{}` of user `{}`",
-			attribute,
-			id
-		)),
+		StringOrBytes::Bytes(bytes) => String::from_utf8(bytes).with_context(|| {
+			format!("Binary values expected to be utf8: attribute `{}` of user `{}`", attribute, id)
+		}),
 	}
+}
+
+/// Read an optional attribute, but assert that it is a string
+#[anyhow_trace::anyhow_trace]
+fn read_string_entry_opt(
+	entry: &SearchEntry,
+	attribute: &AttributeMapping,
+	id: &str,
+) -> Result<Option<String>> {
+	read_search_entry(entry, attribute)
+		.ok()
+		.map(|entry| match entry {
+			StringOrBytes::String(entry) => Ok(entry),
+			StringOrBytes::Bytes(bytes) => String::from_utf8(bytes).with_context(|| {
+				format!(
+					"Binary values expected to be utf8: attribute `{}` of user `{}`",
+					attribute, id
+				)
+			}),
+		})
+		.transpose()
 }
 
 /// Read an attribute from the entry
