@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2025-03-20
+
+### Features
+
+- Add filtering by org and project ids
+
+### Refactor
+
+- Refactor get_next_zitadel_user into stream combinators
+- Refactor to rust 2024 edition
+- Bump rustfmt style edition to 2024
+- Add anyhow_trace, use anyhow_ext
+
+### Documentation
+
+- *(sample-config)* Add AD sample configuration
+
+### Testing
+
+- Minor improvements to test-setup.sh
+- Assert that users from other projects are not deleted
+
+### Miscellaneous Tasks
+
+- Bump zitadel_rust_client to v0.3.0
+- Add project automation
+- Update Dockerfile base image
+- Add maintainers to codeowners file
+
 ## [0.9.1] - 2025-02-14
 
 ### Bug Fixes
