@@ -2,12 +2,12 @@
 
 use std::{fmt::Display, path::PathBuf, time::Duration};
 
-use anyhow_ext::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use itertools::Itertools;
 use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
 use native_tls::{Certificate, Identity, TlsConnector};
 use serde::Deserialize;
+use thiserror::Error;
 use url::Url;
 
 use super::Source;
@@ -20,25 +20,26 @@ pub struct LdapSource {
 }
 
 #[async_trait]
-#[anyhow_trace::anyhow_trace]
 impl Source for LdapSource {
 	fn get_name(&self) -> &'static str {
 		"LDAP"
 	}
 
-	async fn get_sorted_users(&self) -> Result<Vec<User>> {
+	async fn get_sorted_users(&self) -> crate::err::Result<Vec<User>> {
 		let (conn, mut ldap) = LdapConnAsync::from_url_with_settings(
-			self.ldap_config.clone().try_into()?,
+			self.ldap_config.clone().try_into().map_err(LdapError::Certificate)?,
 			&self.ldap_config.url,
 		)
-		.await?;
+		.await
+		.map_err(LdapError::Connection)?;
 
 		let connection_result = ldap3::drive!(conn);
 
 		ldap.with_timeout(Duration::from_secs(self.ldap_config.timeout))
 			.simple_bind(&self.ldap_config.bind_dn, &self.ldap_config.bind_password)
-			.await?
-			.non_error()?;
+			.await
+			.and_then(|res| res.non_error())
+			.map_err(LdapError::Auth)?;
 
 		// We *could* use the streaming search instead, as that
 		// *could* let up on memory pressure, however we end up
@@ -53,19 +54,21 @@ impl Source for LdapSource {
 				&self.ldap_config.user_filter,
 				self.ldap_config.clone().get_attribute_list(),
 			)
-			.await?
-			.non_error()?;
+			.await
+			.and_then(|res| res.non_error())
+			.map_err(LdapError::Query)?;
 
 		let mut users: Vec<User> = search_results
 			.into_iter()
 			.map(SearchEntry::construct)
 			.map(|entry| self.parse_user(entry))
-			.try_collect()?;
+			.try_collect()
+			.map_err(LdapError::Parsing)?;
 
 		// Check if there were any connection errors before proceeding
 		// with an expensive sort
-		ldap.unbind().await?;
-		connection_result.await.context("Connection to ldap server failed")?;
+		ldap.unbind().await.map_err(LdapError::Query)?;
+		connection_result.await.map_err(LdapError::Thread)?;
 
 		// There are LDAP extensions that permit sorting, however they
 		// seem to be largely best-effort, and the server may just
@@ -83,7 +86,6 @@ impl Source for LdapSource {
 	}
 }
 
-#[anyhow_trace::anyhow_trace]
 impl LdapSource {
 	/// Create a new LDAP source
 	pub fn new(ldap_config: LdapSourceConfig) -> Self {
@@ -91,7 +93,7 @@ impl LdapSource {
 	}
 
 	/// Construct a user from an LDAP SearchEntry
-	pub(crate) fn parse_user(&self, entry: SearchEntry) -> Result<User> {
+	pub(crate) fn parse_user(&self, entry: SearchEntry) -> Result<User, EntryParseError> {
 		let disable_bitmask = {
 			use std::ops::BitOr;
 			self.ldap_config.attributes.disable_bitmasks.iter().fold(0, i32::bitor)
@@ -102,23 +104,25 @@ impl LdapSource {
 			disable_bitmask
 				& match status {
 					StringOrBytes::String(status) => {
-						status.parse::<i32>().context("failed to parse status attribute")?
+						status.parse::<i32>().map_err(EntryParseError::StatusAttribute)?
 					}
 					StringOrBytes::Bytes(status) => {
-						i32::from_be_bytes(status.try_into().map_err(|err: Vec<u8>| {
-							let err_string = String::from_utf8_lossy(&err).to_string();
-							anyhow!(err_string).context("failed to convert to i32 flag")
-						})?)
+						let bytes: [u8; 4] = status.try_into().map_err(
+							// The std error passes on the
+							// bytes, these are not useful to us
+							|_bytes| EntryParseError::StatusAttributeByteWidth,
+						)?;
+						i32::from_be_bytes(bytes)
 					}
 				} == 0
 		} else if let StringOrBytes::String(status) = status {
 			match &status[..] {
 				"TRUE" => true,
 				"FALSE" => false,
-				_ => bail!("Cannot parse status without disable_bitmasks: {:?}", status),
+				_ => return Err(EntryParseError::MissingBitmask(StringOrBytes::String(status))),
 			}
 		} else {
-			bail!("Binary status without disable_bitmasks");
+			return Err(EntryParseError::MissingBitmask(status));
 		};
 
 		let (ldap_user_id, localpart) =
@@ -160,25 +164,24 @@ impl LdapSource {
 }
 
 /// Read an an attribute, but assert that it is a string
-#[anyhow_trace::anyhow_trace]
 fn read_string_entry(
 	entry: &SearchEntry,
 	attribute: &AttributeMapping,
 	id: &str,
-) -> Result<String> {
+) -> Result<String, EntryParseError> {
 	match read_search_entry(entry, attribute)? {
 		StringOrBytes::String(entry) => Ok(entry),
-		StringOrBytes::Bytes(_) => Err(anyhow!(
-			"Binary values are not accepted: attribute `{}` of user `{}`",
-			attribute,
-			id
-		)),
+		StringOrBytes::Bytes(_) => {
+			Err(EntryParseError::InvalidBinaryAttribute(attribute.to_string(), id.to_owned()))
+		}
 	}
 }
 
 /// Read an attribute from the entry
-#[anyhow_trace::anyhow_trace]
-fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Result<StringOrBytes> {
+fn read_search_entry(
+	entry: &SearchEntry,
+	attribute: &AttributeMapping,
+) -> Result<StringOrBytes, EntryParseError> {
 	match attribute {
 		AttributeMapping::OptionalBinary { name, is_binary: false }
 		| AttributeMapping::NoBinaryOption(name) => entry
@@ -206,7 +209,7 @@ fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Resul
 			})
 			.map(StringOrBytes::Bytes),
 	}
-	.ok_or(anyhow!("missing `{}` values for `{}`", attribute, entry.dn))
+	.ok_or(EntryParseError::MissingAttribute(attribute.to_string(), entry.dn.clone()))
 }
 
 /// LDAP-specific configuration
@@ -238,7 +241,6 @@ pub struct LdapSourceConfig {
 	pub tls: Option<LdapTlsConfig>,
 }
 
-#[anyhow_trace::anyhow_trace]
 impl LdapSourceConfig {
 	/// Get the attribute list, taking into account whether we should
 	/// be using the attribute filter or not.
@@ -251,11 +253,10 @@ impl LdapSourceConfig {
 	}
 }
 
-#[anyhow_trace::anyhow_trace]
 impl TryFrom<LdapSourceConfig> for LdapConnSettings {
-	type Error = anyhow::Error;
+	type Error = CertificateError;
 
-	fn try_from(cfg: LdapSourceConfig) -> Result<Self> {
+	fn try_from(cfg: LdapSourceConfig) -> Result<Self, CertificateError> {
 		let mut settings = LdapConnSettings::new()
 			.set_starttls(cfg.tls.as_ref().is_some_and(|tls| tls.danger_use_start_tls))
 			.set_no_tls_verify(cfg.tls.as_ref().is_some_and(|tls| tls.danger_disable_tls_verify));
@@ -265,24 +266,17 @@ impl TryFrom<LdapSourceConfig> for LdapConnSettings {
 				.server_certificate
 				.as_ref()
 				.map(std::fs::read)
-				.transpose()
-				.context("Failed to read server certificate")?
+				.transpose()?
 				.map(|cert_data| Certificate::from_pem(cert_data.as_slice()))
-				.transpose()
-				.context("Invalid server certificate")?;
+				.transpose()?;
 
 			let identity: Option<Identity> = match (tls.client_key, tls.client_certificate) {
-				(Some(client_key), Some(client_cert)) => Some(
-					Identity::from_pkcs8(
-						std::fs::read(client_cert)?.as_slice(),
-						std::fs::read(client_key)?.as_slice(),
-					)
-					.context("Could not create client identity")?,
-				),
+				(Some(client_key), Some(client_cert)) => Some(Identity::from_pkcs8(
+					std::fs::read(client_cert)?.as_slice(),
+					std::fs::read(client_key)?.as_slice(),
+				)?),
 				(None, None) => None,
-				_ => {
-					bail!("Both client key *and* certificate must be specified")
-				}
+				_ => return Err(CertificateError::Incomplete),
 			};
 
 			if root_cert.is_some() || identity.is_some() {
@@ -428,6 +422,50 @@ enum StringOrBytes {
 	String(String),
 	/// A byte string
 	Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Error)]
+pub enum EntryParseError {
+	#[error("missing attribute `{0}` of user `{1}`")]
+	MissingAttribute(String, String),
+	#[error("binary values are not accepted for attribute `{0}` of user `{1}`")]
+	InvalidBinaryAttribute(String, String),
+	#[error("failed to parse status attribute")]
+	StatusAttribute(#[source] std::num::ParseIntError),
+	#[error("status attribute does not have the right number of bytes")]
+	StatusAttributeByteWidth,
+	// TODO: This can probably be resolved at the config level, rather
+	// than mid-parsing
+	#[error(
+		"a bitmask must be defined to parse number-based status attributes (failed to parse `{0:?}`)"
+	)]
+	MissingBitmask(StringOrBytes),
+}
+
+#[derive(Debug, Error)]
+pub enum CertificateError {
+	#[error("invalid certificate")]
+	Invalid(#[from] native_tls::Error),
+	#[error("could not read certificate from file")]
+	FileSystem(#[from] std::io::Error),
+	#[error("both client key *and* certificate must be specified")]
+	Incomplete,
+}
+
+#[derive(Debug, Error)]
+pub enum LdapError {
+	#[error("failed to configure LDAP SSL certificates")]
+	Certificate(#[from] CertificateError),
+	#[error("failed to parse LDAP user")]
+	Parsing(#[from] EntryParseError),
+	#[error("connection to LDAP failed")]
+	Connection(#[source] ldap3::LdapError),
+	#[error("LDAP authentication failed")]
+	Auth(#[source] ldap3::LdapError),
+	#[error("LDAP query failed")]
+	Query(#[source] ldap3::LdapError),
+	#[error("LDAP connection thread failed")]
+	Thread(#[from] tokio::task::JoinError),
 }
 
 #[cfg(test)]

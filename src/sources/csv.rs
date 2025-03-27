@@ -2,10 +2,10 @@
 
 use std::{fs, path::PathBuf};
 
-use anyhow_ext::{Context, Result};
 use async_trait::async_trait;
 use csv::Reader;
 use serde::Deserialize;
+use thiserror::Error;
 
 use super::Source;
 use crate::user::{self, User};
@@ -17,20 +17,18 @@ pub struct CsvSource {
 }
 
 #[async_trait]
-#[anyhow_trace::anyhow_trace]
 impl Source for CsvSource {
 	fn get_name(&self) -> &'static str {
 		"CSV"
 	}
 
-	async fn get_sorted_users(&self) -> Result<Vec<User>> {
+	async fn get_sorted_users(&self) -> crate::err::Result<Vec<User>> {
 		let mut new_users = self.read_csv()?;
 		new_users.sort_by(|a, b| a.external_user_id.cmp(&b.external_user_id));
 		return Ok(new_users);
 	}
 }
 
-#[anyhow_trace::anyhow_trace]
 impl CsvSource {
 	/// Create a new CSV source
 	pub fn new(csv_config: CsvSourceConfig) -> Self {
@@ -40,13 +38,13 @@ impl CsvSource {
 	/// Get list of users from CSV file
 	fn read_csv(&self) -> Result<Vec<User>> {
 		let file_path = &self.csv_config.file_path;
-		let file = fs::File::open(&self.csv_config.file_path)
-			.context(format!("Failed to open CSV file {}", file_path.to_string_lossy()))?;
+		let file = fs::File::open(file_path)
+			.map_err(|source| CsvError::FileSystem { source, file_path: file_path.clone() })?;
 		let mut reader = Reader::from_reader(file);
 		Ok(reader
 			.deserialize()
 			.map(|r| r.inspect_err(|x| tracing::error!("Failed to deserialize: {x}")))
-			.filter_map(Result::ok)
+			.filter_map(std::result::Result::ok)
 			.map(CsvData::to_user)
 			.collect())
 	}
@@ -75,7 +73,6 @@ struct CsvData {
 	localpart: String,
 }
 
-#[anyhow_trace::anyhow_trace]
 impl CsvData {
 	/// Convert CsvData to User data
 	fn to_user(csv_data: CsvData) -> User {
@@ -100,26 +97,50 @@ impl CsvData {
 
 /// Helper module for unit and e2e tests
 pub mod test_helpers {
-	use std::fs::write;
+	use std::{error::Error, fs::write, iter::Iterator};
 
-	use anyhow_ext::Result;
 	use tempfile::NamedTempFile;
 
 	use crate::Config;
 
 	/// Prepare a temporary CSV file with the given content and update the
 	/// config to use it as the CSV source file.
-	pub fn temp_csv_file(config: &mut Config, csv_content: &str) -> Result<NamedTempFile> {
-		let temp_file = NamedTempFile::new()?;
-		write(temp_file.path(), csv_content)?;
+	pub fn temp_csv_file(config: &mut Config, csv_content: &str) -> NamedTempFile {
+		let temp_file = NamedTempFile::new().expect("must create temp path");
+		write(temp_file.path(), csv_content).expect("must create temp path");
 
 		if let Some(csv) = config.sources.csv.as_mut() {
 			csv.file_path = temp_file.path().to_path_buf();
 		}
 
-		Ok(temp_file)
+		temp_file
+	}
+
+	pub fn error_chain(err: &dyn Error) -> impl Iterator<Item = Box<&dyn Error>> {
+		let mut current_error = err;
+
+		std::iter::from_fn(move || {
+			if let Some(err) = current_error.source() {
+				current_error = err;
+				Some(Box::new(current_error))
+			} else {
+				None
+			}
+		})
 	}
 }
+
+#[derive(Debug, Error)]
+pub enum CsvError {
+	#[error("failed to open file {file_path}")]
+	FileSystem {
+		#[source]
+		source: std::io::Error,
+		file_path: PathBuf,
+	},
+}
+
+type Result<T> = std::result::Result<T, CsvError>;
 
 #[cfg(test)]
 mod tests {
@@ -252,7 +273,7 @@ mod tests {
 		let result = csv.read_csv();
 		let error = result.expect_err("Expected error for invalid CSV data");
 		assert!(
-			error.chain().any(|e| e.to_string().contains("Failed to open CSV file")),
+			test_helpers::error_chain(&error).any(|e| e.to_string().contains("Failed to open file")),
 			"Unexpected error message: {:?}",
 			error
 		);

@@ -1,12 +1,13 @@
 //! Sync tool between other sources and our infrastructure based on Zitadel.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow_ext::{Context, Result};
+use anyhow_ext::Context;
 use futures::{StreamExt, TryStreamExt};
 use user::User;
 use zitadel::{SkipableZitadelResult, Zitadel};
 
 mod config;
+pub mod err;
 mod sources;
 pub mod user;
 pub mod zitadel;
@@ -14,6 +15,7 @@ pub mod zitadel;
 use std::{collections::VecDeque, pin::pin};
 
 pub use config::{Config, FeatureFlag, LdapSourceConfig};
+use err::Result;
 use sources::{Source, csv::CsvSource, ldap::LdapSource, ukt::UktSource};
 pub use sources::{
 	csv::test_helpers as csv_test_helpers, ldap::AttributeMapping,
@@ -25,11 +27,7 @@ pub use sources::{
 pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	/// Get users from a source
 	async fn get_users_from_source(source: impl Source + Send) -> Result<VecDeque<User>> {
-		source
-			.get_sorted_users()
-			.await
-			.map(VecDeque::from)
-			.context(format!("Failed to query users from {}", source.get_name()))
+		source.get_sorted_users().await.map(VecDeque::from)
 	}
 
 	let deactivate_only = config.feature_flags.is_enabled(FeatureFlag::DeactivateOnly);
