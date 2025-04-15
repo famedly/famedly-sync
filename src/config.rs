@@ -170,7 +170,7 @@ mod tests {
 		match value {
 			serde_yaml::Value::Bool(value) => value.to_string(),
 			serde_yaml::Value::Number(value) => value.to_string(),
-			serde_yaml::Value::String(value) => value.to_string(),
+			serde_yaml::Value::String(value) => value.clone(),
 			serde_yaml::Value::Sequence(arr) => {
 				let mut values: Vec<String> = Vec::new();
 				for value in arr {
