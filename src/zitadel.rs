@@ -106,11 +106,11 @@ impl<'s> Zitadel<'s> {
 			.filter_map(Skippable::filter_out))
 	}
 
-	/// Return a stream of Zitadel users
+	/// Return a stream of raw Zitadel users
 	#[tracing::instrument(skip_all)]
-	pub fn list_users(
+	pub fn list_users_raw(
 		&self,
-	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
+	) -> Result<impl Stream<Item = Result<ZitadelUser>> + Send + use<'_>> {
 		Ok(self
 			.zitadel_client
 			.list_users(
@@ -123,16 +123,9 @@ impl<'s> Zitadel<'s> {
 					)),
 				]))]),
 			)?
-			// TODO: possibly remove this and abort sync
-			// currently preserves previous behavior
-			.filter_map(async |res| {
-				res.skip_zitadel_error("fetching users by email", self.skipped_errors)
-			})
-			.then(async |user| self.search_result_to_user(user).await)
-			// TODO: figure out what to do if zitadel users lack metadata
-			.filter_map(Skippable::filter_out)
-			// TODO: contact zitadel and find a better solution to avoid extra api call:
-			.try_filter_map(async |(id, user)| {
+			.try_filter_map(async |user| {
+				let id = user.user_id().context("Missing Zitadel user ID")?.clone();
+
 				let grant = self
 					.zitadel_client
 					.search_user_grants(
@@ -155,8 +148,25 @@ impl<'s> Zitadel<'s> {
 					)?
 					.next()
 					.await;
-				Ok(grant.is_some().then_some((id, user)))
+				Ok(grant.is_some().then_some(user))
 			}))
+	}
+
+	/// Return a stream of Zitadel users
+	#[tracing::instrument(skip_all)]
+	pub fn list_users(
+		&self,
+	) -> Result<impl Stream<Item = Result<(ZitadelUserId, User)>> + Send + use<'_>> {
+		Ok(self
+			.list_users_raw()?
+			// TODO: possibly remove this and abort sync
+			// currently preserves previous behavior
+			.filter_map(async |res| {
+				res.skip_zitadel_error("fetching users by email", self.skipped_errors)
+			})
+			.then(async |user| self.search_result_to_user(user).await)
+			// TODO: figure out what to do if zitadel users lack metadata
+			.filter_map(Skippable::filter_out))
 	}
 
 	/// Return a vector of a random sample of Zitadel users

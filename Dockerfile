@@ -26,5 +26,6 @@ RUN mkdir -p /opt/famedly-sync
 WORKDIR /opt/famedly-sync
 COPY --from=builder /app/target/release/famedly-sync /usr/local/bin/famedly-sync
 COPY --from=builder /app/target/release/migrate /usr/local/bin/migrate
+COPY --from=builder /app/target/release/install-ids /usr/local/bin/install-ids
 ENV FAMEDLY_SYNC_CONFIG="/opt/famedly-sync/config.yaml"
-ENTRYPOINT ["/usr/local/bin/famedly-sync"]
+CMD ["/usr/local/bin/famedly-sync"]

@@ -1,10 +1,14 @@
 //! Sync tool between other sources and our infrastructure based on Zitadel.
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+	collections::{HashMap, HashSet},
+	sync::atomic::{AtomicUsize, Ordering},
+};
 
 use anyhow_ext::{Context, Result};
 use futures::{StreamExt, TryStreamExt};
 use user::User;
 use zitadel::{SkipableZitadelResult, Zitadel};
+use zitadel_rust_client::v2::users::{SetHumanProfile, UpdateHumanUserRequest};
 
 mod config;
 mod sources;
@@ -246,6 +250,112 @@ async fn sync_users(
 					"Unreachable condition met for users `{}` and `{}`",
 					new_user.external_user_id, existing_user.external_user_id
 				));
+			}
+		}
+	}
+
+	Ok(())
+}
+
+/// Pull user IDs from LDAP into Zitadel
+pub async fn link_user_ids(config: Config, skipped_errors: &SkippedErrors) -> Result<()> {
+	let Some(ldap_config) = config.sources.ldap else {
+		anyhow::bail!("LDAP must be configured to link user IDs")
+	};
+
+	let ldap_client = LdapSource::new(ldap_config);
+	let zitadel_client =
+		Zitadel::new(config.zitadel.clone(), config.feature_flags, skipped_errors).await?;
+
+	let ldap_users: HashMap<String, User> = {
+		let users = ldap_client.get_sorted_users().await.context("Failed to query LDAP users")?;
+		users.into_iter().map(|user| (user.email.clone(), user)).collect()
+	};
+
+	let mut zitadel_users =
+		pin!(zitadel_client.list_users_raw().context("failed to query Zitadel users")?);
+
+	let mut seen_emails: HashSet<String> = HashSet::new();
+
+	while let Some(user) = zitadel_users.next().await.transpose().context("failed to query user")? {
+		let Some(zitadel_id) = user.user_id() else {
+			tracing::error!(
+				"Skipping user without a Zitadel ID. Users like this should never appear, this Zitadel instance is very broken."
+			);
+			continue;
+		};
+
+		let Some(human_user) = user.human() else {
+			tracing::error!("Skipping ID linking for non-human user `{zitadel_id}`");
+			continue;
+		};
+
+		let Some(email) = human_user.email().and_then(|e| e.email()) else {
+			tracing::error!("Skipping ID linking for user `{zitadel_id}` without an email address");
+			continue;
+		};
+
+		if !seen_emails.insert(email.to_owned()) {
+			// Zitadel doesn't actually allow this case, but it's here
+			// just in case
+			tracing::error!("Multiple users with the same email address exist");
+			tracing::error!("Refusing to duplicate ID of user `{zitadel_id}`");
+			tracing::error!("Manual conversion of some users will be required");
+			continue;
+		};
+
+		let Some(given_name) = human_user.profile().and_then(|p| p.given_name()) else {
+			tracing::error!(
+				"Skipping work for a user without a given name, because they are immune to Zitadel's API. Give user `{zitadel_id}` a name!"
+			);
+			continue;
+		};
+		let Some(last_name) = human_user.profile().and_then(|p| p.family_name()) else {
+			tracing::error!(
+				"Skipping work for a user without a last name, because they are immune to Zitadel's API. Give user `{zitadel_id}` a name!"
+			);
+			continue;
+		};
+		let nick = human_user.profile().and_then(|p| p.nick_name());
+		let Some(ldap_id) = ldap_users.get(email).map(|lu| lu.external_user_id.clone()) else {
+			tracing::error!("User `{zitadel_id}` does not have a corresponding LDAP user");
+			continue;
+		};
+
+		match nick {
+			Some(nick) if nick.is_empty() => {
+				let mut request = UpdateHumanUserRequest::new();
+				request.set_profile(
+					SetHumanProfile::new(given_name.clone(), last_name.clone())
+						.with_nick_name(ldap_id),
+				);
+
+				if let Err(error) =
+					zitadel_client.zitadel_client.update_human_user(zitadel_id, request).await
+				{
+					tracing::error!(
+						"Failed to set nickname field for user `{zitadel_id}: {:?}",
+						error
+					);
+					continue;
+				};
+
+				tracing::info!("Updated LDAP link for user `{zitadel_id}`");
+			}
+			Some(nick) if *nick != ldap_id => {
+				tracing::error!(
+					"External ID for user `{zitadel_id}` does not match the external ID for the LDAP user with their email address, {nick} {ldap_id}"
+				);
+				tracing::error!(
+					"Something has gone very wrong for this user, please correct their data manually"
+				);
+				continue;
+			}
+			Some(nick) => {
+				tracing::info!("User `{zitadel_id}` is already linked to user `{nick}`");
+			}
+			None => {
+				unreachable!()
 			}
 		}
 	}

@@ -43,6 +43,86 @@ Config can have **various sources** to sync from. When a source is configured, t
 
 ## Migrations
 
+### Existing Zitadel deployments
+
+For Zitadel deployments that have not been synced to before, we
+provide an "ID installation" binary. This links users to their LDAP
+counterparts via the LDAP ID, so that famedly-sync can correctly
+identify them in subsequent sync runs.
+
+This is intended to run *exactly* once, when initializing an existing
+Zitadel instance for being synced to with famedly-sync in the future.
+
+Ideally, this should never need to be done, however in practice we
+have quite a few legacy instances, which could not be migrated
+without adequate tooling.
+
+The tool expects a 1:1 mapping from Zitadel email addresses to LDAP
+users. Zitadel users must be in the configured organization and
+project, as well as have the `User` grant.
+
+There are a couple of known failure conditions:
+
+- If any admin users were created, and additionally given the `User`
+  grant, the service user will likely not be able to update them
+- Users without email addresses will be skipped
+- If multiple users share an email address, they will not be silently
+  given the same IDs
+- Users without corresponding LDAP users will be skipped
+
+Any of these errors, as well as more unpredictable scenarios, will be
+logged with the associated user's Zitadel ID. Should such errors
+occur, a manual migration of these users is likely necessary - for
+this, simply use the Zitadel UI to change the user's `Nickname` field
+to the hex-encoded value of their LDAP id. To convert the string
+reported by `ldapsearch`, this python script should be enough:
+
+```python
+import base64
+import sys
+
+ldapsearch_id = sys.argv[1]
+
+uid = base64.standard_b64decode(ldapsearch_id).hex()
+print(uid)
+```
+
+The tool performs the following actions for each Zitadel user:
+
+ 1. Gather the current list of LDAP users according to the famedly-sync
+    filter configuration
+ 2. Start iterating through all Zitadel users, taking their email address
+    and nickname
+    1. If no nickname is set, check the list of LDAP users for users with
+       matching email addresses
+       - If exactly one user with this address exists, take their ID
+         attribute, encode it appropriately, and write it to the Zitadel
+         user's nickname
+       - Otherwise, print a warning and continue with the next user
+    2. If a nickname is already set, double check that email address is
+       unique among Zitadel users and that the nickname matches LDAP's ID
+       attribute
+      - If not, print a warning
+      - If everything matches, continue with the next user
+
+This tool will likely become obsolete with the famedly-sync re-design,
+as we will no longer need to perform this tedious nickname <-> LDAP ID
+mapping in the first place.
+
+This tool reuses the same configuration file as `famedly-sync`
+itself. The binary can be executed as part of the same docker
+environment as `famedly-sync`:
+
+```bash
+docker run --rm -it --network host --volume ./opt:/opt/famedly-sync docker-oss.nexus.famedly.de/famedly-sync-agent:latest /usr/local/bin/install-ids
+```
+
+It can also be executed with the `docker-compose.yaml` by adding
+`command: /usr/local/bin/install-ids` to the `famedly-sync-agent`
+service.
+
+### Famedly-sync v0.7.0 and earlier
+
 `famedly-sync` v0.8.0 changed the user ID schema, and therefore
 requires a migration step. For this, a `migrate` binary was added,
 which reads the same configuration file as the main `famedly-sync`
