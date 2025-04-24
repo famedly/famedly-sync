@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [0.10.1] - 2025-04-24
+
+### Bug Fixes
+
+- Update rust crate tokio to v1.44.2 [security]
+
+### Features
+
+- Add ID installation script
+
 ## [0.10.0] - 2025-03-20
 
 ### Features
