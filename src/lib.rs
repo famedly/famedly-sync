@@ -4,7 +4,7 @@ use std::{
 	sync::atomic::{AtomicUsize, Ordering},
 };
 
-use anyhow_ext::{Context, Result};
+use anyhow_ext::{Context, Result, bail};
 use futures::{StreamExt, TryStreamExt};
 use user::User;
 use zitadel::{SkipableZitadelResult, Zitadel};
@@ -278,88 +278,84 @@ pub async fn link_user_ids(config: Config, skipped_errors: &SkippedErrors) -> Re
 	let mut seen_emails: HashSet<String> = HashSet::new();
 
 	while let Some(user) = zitadel_users.next().await.transpose().context("failed to query user")? {
-		let Some(zitadel_id) = user.user_id() else {
-			tracing::error!(
-				"Skipping user without a Zitadel ID. Users like this should never appear, this Zitadel instance is very broken."
-			);
-			continue;
-		};
-
-		let Some(human_user) = user.human() else {
-			tracing::error!("Skipping ID linking for non-human user `{zitadel_id}`");
-			continue;
-		};
-
-		let Some(email) = human_user.email().and_then(|e| e.email()) else {
-			tracing::error!("Skipping ID linking for user `{zitadel_id}` without an email address");
-			continue;
-		};
-
-		if !seen_emails.insert(email.to_owned()) {
-			// Zitadel doesn't actually allow this case, but it's here
-			// just in case
-			tracing::error!("Multiple users with the same email address exist");
-			tracing::error!("Refusing to duplicate ID of user `{zitadel_id}`");
-			tracing::error!("Manual conversion of some users will be required");
-			continue;
-		};
-
-		let Some(given_name) = human_user.profile().and_then(|p| p.given_name()) else {
-			tracing::error!(
-				"Skipping work for a user without a given name, because they are immune to Zitadel's API. Give user `{zitadel_id}` a name!"
-			);
-			continue;
-		};
-		let Some(last_name) = human_user.profile().and_then(|p| p.family_name()) else {
-			tracing::error!(
-				"Skipping work for a user without a last name, because they are immune to Zitadel's API. Give user `{zitadel_id}` a name!"
-			);
-			continue;
-		};
-		let nick = human_user.profile().and_then(|p| p.nick_name());
-		let Some(ldap_id) = ldap_users.get(email).map(|lu| lu.external_user_id.clone()) else {
-			tracing::error!("User `{zitadel_id}` does not have a corresponding LDAP user");
-			continue;
-		};
-
-		match nick {
-			Some(nick) if nick.is_empty() => {
-				let mut request = UpdateHumanUserRequest::new();
-				request.set_profile(
-					SetHumanProfile::new(given_name.clone(), last_name.clone())
-						.with_nick_name(ldap_id),
-				);
-
-				if let Err(error) =
-					zitadel_client.zitadel_client.update_human_user(zitadel_id, request).await
-				{
-					tracing::error!(
-						"Failed to set nickname field for user `{zitadel_id}: {:?}",
-						error
-					);
-					continue;
-				};
-
-				tracing::info!("Updated LDAP link for user `{zitadel_id}`");
-			}
-			Some(nick) if *nick != ldap_id => {
-				tracing::error!(
-					"External ID for user `{zitadel_id}` does not match the external ID for the LDAP user with their email address, {nick} {ldap_id}"
-				);
-				tracing::error!(
-					"Something has gone very wrong for this user, please correct their data manually"
-				);
-				continue;
-			}
-			Some(nick) => {
-				tracing::info!("User `{zitadel_id}` is already linked to user `{nick}`");
-			}
-			None => {
-				unreachable!()
-			}
-		}
+		let _ = link_user_id(&zitadel_client, &ldap_users, &mut seen_emails, &user)
+			.await
+			.inspect_err(|e| tracing::error!("Error fixing user {:?}: {e:?}", user.user_id()));
 	}
 
+	Ok(())
+}
+
+/// Set LDAP ID in Zitadel
+async fn link_user_id(
+	zitadel_client: &Zitadel<'_>,
+	ldap_users: &HashMap<String, User>,
+	seen_emails: &mut HashSet<String>,
+	user: &zitadel_rust_client::v2::users::User,
+) -> Result<()> {
+	let zitadel_id = user.user_id().context(
+		"Skipping user without a Zitadel ID. Users like this should never appear, this Zitadel instance is very broken."
+	)?;
+
+	let human_user = user
+		.human()
+		.with_context(|| format!("Skipping ID linking for non-human user `{zitadel_id}`"))?;
+
+	let email = human_user.email().and_then(|e| e.email()).with_context(|| {
+		format!("Skipping ID linking for user `{zitadel_id}` without an email address")
+	})?;
+
+	if !seen_emails.insert(email.to_owned()) {
+		// Zitadel doesn't actually allow this case, but it's here
+		// just in case
+		bail!(
+			"Multiple users with the same email address exist\nRefusing to duplicate ID of user `{zitadel_id}`\nManual conversion of some users will be required"
+		);
+	};
+
+	let given_name = human_user.profile().and_then(|p| p.given_name()).with_context(||
+			format!(
+				"Skipping work for a user without a given name, because they are immune to Zitadel's API. Give user `{zitadel_id}` a name!"
+			)
+		)?;
+	let last_name = human_user.profile().and_then(|p| p.family_name()).with_context(||
+			format!(
+				"Skipping work for a user without a last name, because they are immune to Zitadel's API. Give user `{zitadel_id}` a name!"
+			)
+		)?;
+	let nick = human_user.profile().and_then(|p| p.nick_name());
+	let ldap_id = ldap_users
+		.get(email)
+		.map(|lu| lu.external_user_id.clone())
+		.with_context(|| format!("User `{zitadel_id}` does not have a corresponding LDAP user"))?;
+
+	match nick {
+		Some(nick) if nick.is_empty() => {
+			let mut request = UpdateHumanUserRequest::new();
+			request.set_profile(
+				SetHumanProfile::new(given_name.clone(), last_name.clone()).with_nick_name(ldap_id),
+			);
+
+			zitadel_client
+				.zitadel_client
+				.update_human_user(zitadel_id, request)
+				.await
+				.with_context(|| format!("Failed to set nickname field for user `{zitadel_id}",))?;
+
+			tracing::info!("Updated LDAP link for user `{zitadel_id}`");
+		}
+		Some(nick) if *nick != ldap_id => {
+			bail!(
+				"External ID for user `{zitadel_id}` does not match the external ID for the LDAP user with their email address, {nick} {ldap_id}\nSomething has gone very wrong for this user, please correct their data manually"
+			);
+		}
+		Some(nick) => {
+			tracing::info!("User `{zitadel_id}` is already linked to user `{nick}`");
+		}
+		None => {
+			unreachable!()
+		}
+	}
 	Ok(())
 }
 
