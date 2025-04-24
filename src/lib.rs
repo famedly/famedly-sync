@@ -272,6 +272,8 @@ pub async fn link_user_ids(config: Config, skipped_errors: &SkippedErrors) -> Re
 		users.into_iter().map(|user| (user.email.clone(), user)).collect()
 	};
 
+	tracing::trace!("Found LDAP users: {:?}", ldap_users);
+
 	let mut zitadel_users =
 		pin!(zitadel_client.list_users_raw().context("failed to query Zitadel users")?);
 
@@ -294,6 +296,8 @@ pub async fn link_user_ids(config: Config, skipped_errors: &SkippedErrors) -> Re
 			tracing::error!("Skipping ID linking for user `{zitadel_id}` without an email address");
 			continue;
 		};
+
+		tracing::trace!("Trying to match user with email {}", email);
 
 		if !seen_emails.insert(email.to_owned()) {
 			// Zitadel doesn't actually allow this case, but it's here
@@ -321,6 +325,8 @@ pub async fn link_user_ids(config: Config, skipped_errors: &SkippedErrors) -> Re
 			tracing::error!("User `{zitadel_id}` does not have a corresponding LDAP user");
 			continue;
 		};
+
+		tracing::debug!("Found LDAP user `{}`", ldap_id);
 
 		match nick {
 			Some(nick) if nick.is_empty() => {
