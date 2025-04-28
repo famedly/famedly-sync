@@ -172,11 +172,7 @@ mod tests {
 			serde_yaml::Value::Number(value) => value.to_string(),
 			serde_yaml::Value::String(value) => value.clone(),
 			serde_yaml::Value::Sequence(arr) => {
-				let mut values: Vec<String> = Vec::new();
-				for value in arr {
-					values.push(get_string(value));
-				}
-				values.join(ENV_VAR_LIST_SEP)
+				arr.iter().map(get_string).collect::<Vec<_>>().join(ENV_VAR_LIST_SEP)
 			}
 			_ => "".to_owned(),
 		}
@@ -241,13 +237,13 @@ mod tests {
 	#[tokio::test]
 	async fn test_sample_config() {
 		let config = Config::new(Path::new("./sample-configs/csv-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 		let config = Config::new(Path::new("./sample-configs/ldap-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 		let config = Config::new(Path::new("./sample-configs/ukt-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 		let config = Config::new(Path::new("./sample-configs/ad-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 	}
 
 	#[test]

@@ -158,7 +158,7 @@ mod tests {
 			"email@example.com".to_owned(),
 			None,
 			true,
-			"Example User".to_owned(),
+			Some("Example User".to_owned()),
 			external_user_id.to_owned(),
 			external_user_id.get_localpart(),
 		)
@@ -173,8 +173,7 @@ mod tests {
 		let detected = detect_database_encoding(users);
 		assert_eq!(
 			detected, expected_encoding,
-			"Expected {:?} but got {:?}",
-			expected_encoding, detected
+			"Expected {expected_encoding:?} but got {detected:?}"
 		);
 	}
 
@@ -379,7 +378,7 @@ mod tests {
 			"email@example.com".to_owned(),
 			None,
 			true,
-			"Example User".to_owned(),
+			Some("Example User".to_owned()),
 			"Y2FmZQ==".to_owned(),       // base64 encoded external ID
 			"test.localpart".to_owned(), // localpart should be preserved
 		);

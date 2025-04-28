@@ -83,7 +83,7 @@ impl Ldap {
 			.as_str();
 
 		self.client
-			.add(&format!("uid={},{}", uid, base_dn), attrs)
+			.add(&format!("uid={uid},{base_dn}"), attrs)
 			.await
 			.expect("failed to create debug user")
 			.success()
@@ -113,7 +113,7 @@ impl Ldap {
 			.as_str();
 
 		self.client
-			.modify(&format!("uid={},{}", uid, base_dn), mods)
+			.modify(&format!("uid={uid},{base_dn}"), mods)
 			.await
 			.expect("failed to modify user")
 			.success()
@@ -132,7 +132,7 @@ impl Ldap {
 			.as_str();
 
 		self.client
-			.delete(&format!("uid={},{}", uid, base_dn))
+			.delete(&format!("uid={uid},{base_dn}"))
 			.await
 			.expect("failed to delete user")
 			.success()

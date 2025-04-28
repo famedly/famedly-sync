@@ -173,9 +173,8 @@ pub mod test_helpers {
 			.and(header("Authorization", "Bearer mock_access_token"))
 			.respond_with(ResponseTemplate::new(StatusCode::OK).set_body_string(format!(
 				r#"[
-              "{}"
-          ]"#,
-				email_to_delete
+              "{email_to_delete}"
+          ]"#
 			)))
 			.up_to_n_times(1)
 			.mount(mock_server)
@@ -238,7 +237,7 @@ mod tests {
 		let ukt = UktSource::new(ukt_config);
 
 		let result = ukt.get_oauth2_token().await;
-		assert!(result.is_ok(), "Failed to get OAuth2 token: {:?}", result);
+		assert!(result.is_ok(), "Failed to get OAuth2 token: {result:?}");
 	}
 
 	#[tokio::test]
@@ -269,7 +268,7 @@ mod tests {
 		let oauth2_token = ukt.get_oauth2_token().await.expect("Failed to get access token");
 
 		let result = ukt.fetch_list(oauth2_token).await;
-		assert!(result.is_ok(), "Failed to fetch email list: {:?}", result);
+		assert!(result.is_ok(), "Failed to fetch email list: {result:?}");
 
 		let email_list = result.expect("Failed to get email list");
 		assert_eq!(email_list.len(), 1, "Unexpected number of emails");
@@ -303,7 +302,7 @@ mod tests {
 		};
 
 		let result = ukt.fetch_list(incorrect_oauth2_token).await;
-		assert!(result.is_err(), "Didn't expect to fetch email list: {:?}", result);
+		assert!(result.is_err(), "Didn't expect to fetch email list: {result:?}");
 	}
 
 	#[tokio::test]

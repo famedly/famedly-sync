@@ -27,7 +27,7 @@ async fn run_sync() -> Result<()> {
 			Err(error) => {
 				// Tracing subscriber is not yet configured, so we
 				// need to manually log this
-				eprintln!("Failed to load config file from {:?}: {}", config_path, error);
+				eprintln!("Failed to load config file from {config_path:?}: {error}");
 				anyhow::bail!(error);
 			}
 		}

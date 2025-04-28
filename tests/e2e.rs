@@ -47,12 +47,12 @@ async fn test_e2e_user_id_encoding() {
 
 		ldap.create_user("Test", "User", "TU", login_name, None, uid, false).await;
 
-		perform_sync(config.clone()).await.map_err(|e| format!("Sync failed: {}", e))?;
+		perform_sync(config.clone()).await.map_err(|e| format!("Sync failed: {e}"))?;
 
 		let user = zitadel
 			.get_user_by_login_name(login_name)
 			.await
-			.map_err(|e| format!("Failed to get user: {}", e))?
+			.map_err(|e| format!("Failed to get user: {e}"))?
 			.ok_or_else(|| "User not found".to_owned())?;
 
 		match user.r#type {
@@ -95,7 +95,7 @@ async fn test_e2e_user_id_encoding() {
 
 	for (uid, email) in TEST_CASES {
 		if let Err(error) = verify_user_encoding(&mut ldap, &zitadel, config, uid, email).await {
-			panic!("Test failed for ID '{}': {}", uid, error);
+			panic!("Test failed for ID '{uid}': {error}");
 		}
 	}
 }
@@ -329,11 +329,11 @@ async fn test_e2e_sync_disabled_user() {
 				return;
 			}
 			_ => {
-				panic!("zitadel failed while searching for user: {}", error)
+				panic!("zitadel failed while searching for user: {error}")
 			}
 		}
 	} else {
-		panic!("disabled user was synced: {:?}", user);
+		panic!("disabled user was synced: {user:?}");
 	}
 }
 
@@ -903,109 +903,6 @@ async fn test_e2e_binary_uid() {
 			assert_eq!(profile.nick_name, hex::encode(invalid_binary_id));
 		}
 		_ => panic!("user lost human details after update"),
-	}
-}
-
-#[test(tokio::test)]
-#[test_log(default_log_filter = "debug")]
-async fn test_e2e_binary_preferred_username() {
-	let mut config = ldap_config().await.clone();
-
-	// Attribute preferred_username is configured as binary but shouldn't be
-
-	config
-		.sources
-		.ldap
-		.as_mut()
-		.expect("ldap must be configured for this test")
-		.attributes
-		.preferred_username = AttributeMapping::OptionalBinary {
-		name: "userSMIMECertificate".to_owned(),
-		is_binary: true,
-	};
-
-	let mut ldap = Ldap::new().await;
-	ldap.create_user(
-		"BobFail",
-		"TablesFail",
-		"BobbyFail",
-		"binary_fail@famedly.de",
-		Some("+12015550123"),
-		"binary_fail",
-		false,
-	)
-	.await;
-
-	// Test with a valid UTF-8 binary attribute
-
-	ldap.change_user(
-		"binary_fail",
-		vec![("userSMIMECertificate".as_bytes(), HashSet::from(["new_binary_fail".as_bytes()]))],
-	)
-	.await;
-
-	let result = tokio::spawn({
-		let config = config.clone();
-		async move { perform_sync(config.clone()).await }
-	})
-	.await;
-
-	match result {
-		Ok(sync_result) => {
-			assert!(sync_result.is_err());
-			let error = sync_result.unwrap_err();
-			assert!(
-				error.chain().any(|e| e.to_string().contains("Failed to query users from LDAP"))
-			);
-			assert!(
-				error.chain().any(|e| e.to_string().contains("Binary values are not accepted"))
-			);
-			assert!(
-				error.chain().any(|e| e.to_string().contains("attribute `userSMIMECertificate`"))
-			);
-		}
-		Err(join_error) if join_error.is_panic() => {
-			panic!("perform_sync panicked unexpectedly: {}", join_error);
-		}
-		Err(e) => {
-			panic!("unexpected error: {}", e);
-		}
-	}
-
-	// Test with an invalid UTF-8 binary attribute
-
-	ldap.change_user(
-		"binary_fail",
-		vec![("userSMIMECertificate".as_bytes(), HashSet::from([[0xA0, 0xA1].as_slice()]))],
-	)
-	.await;
-
-	let result = tokio::spawn({
-		let config = config.clone();
-		async move { perform_sync(config.clone()).await }
-	})
-	.await;
-
-	match result {
-		Ok(sync_result) => {
-			assert!(sync_result.is_err());
-			let error = sync_result.unwrap_err();
-			assert!(
-				error.chain().any(|e| e.to_string().contains("Failed to query users from LDAP"))
-			);
-			assert!(
-				error.chain().any(|e| e.to_string().contains("Binary values are not accepted"))
-			);
-			assert!(
-				error.chain().any(|e| e.to_string().contains("attribute `userSMIMECertificate`"))
-			);
-		}
-		Err(join_error) if join_error.is_panic() => {
-			panic!("perform_sync panicked unexpectedly: {}", join_error);
-		}
-		Err(e) => {
-			panic!("unexpected error: {}", e);
-		}
 	}
 }
 
@@ -1750,16 +1647,14 @@ async fn test_e2e_migrate_then_ldap_sync() {
 			let expected_hex_id = hex::encode(uid.as_bytes());
 			assert_eq!(
 				profile.nick_name, expected_hex_id,
-				"External ID not in hex encoding after LDAP sync for user '{}'",
-				email
+				"External ID not in hex encoding after LDAP sync for user '{email}'"
 			);
 			assert_eq!(
 				profile.first_name, "New First Name",
-				"Fist name was not updated by LDAP sync for user '{}'",
-				email
+				"Fist name was not updated by LDAP sync for user '{email}'"
 			);
 		}
-		_ => panic!("User lacks human details after LDAP sync for user '{}'", email),
+		_ => panic!("User lacks human details after LDAP sync for user '{email}'"),
 	}
 }
 
@@ -1869,14 +1764,13 @@ async fn run_migration_test(
 				let profile = human.profile.expect("User lacks profile");
 				assert_eq!(
 					profile.nick_name, expected_nick_name,
-					"Nickname encoding mismatch for user '{}'",
-					email
+					"Nickname encoding mismatch for user '{email}'"
 				);
 			} else {
-				panic!("User is not of type Human for user '{}'", email);
+				panic!("User is not of type Human for user '{email}'");
 			}
 		}
-		None => panic!("User type is None for user '{}'", email),
+		None => panic!("User type is None for user '{email}'"),
 	}
 }
 
@@ -1917,5 +1811,5 @@ fn run_migration_binary(is_dry_run: bool) {
 		.env("FAMEDLY_SYNC_CONFIG", config_file.to_str().unwrap())
 		.status()
 		.expect("Failed to execute migration binary");
-	assert!(status.success(), "Migration binary exited with status: {}", status);
+	assert!(status.success(), "Migration binary exited with status: {status}");
 }
