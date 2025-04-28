@@ -164,7 +164,7 @@ mod tests {
 		let csv = CsvSource::new(csv_config);
 
 		let result = csv.read_csv();
-		assert!(result.is_ok(), "Failed to get users: {:?}", result);
+		assert!(result.is_ok(), "Failed to get users: {result:?}");
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 4, "Unexpected number of users");
@@ -233,7 +233,7 @@ mod tests {
 		let csv = CsvSource::new(csv_config);
 
 		let result = csv.read_csv();
-		assert!(result.is_ok(), "Failed to get users: {:?}", result);
+		assert!(result.is_ok(), "Failed to get users: {result:?}");
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 0, "Expected empty user list");
@@ -253,8 +253,7 @@ mod tests {
 		let error = result.expect_err("Expected error for invalid CSV data");
 		assert!(
 			error.chain().any(|e| e.to_string().contains("Failed to open CSV file")),
-			"Unexpected error message: {:?}",
-			error
+			"Unexpected error message: {error:?}"
 		);
 	}
 
@@ -289,7 +288,7 @@ mod tests {
 		let csv = CsvSource::new(csv_config);
 
 		let result = csv.read_csv();
-		assert!(result.is_ok(), "Failed to get users: {:?}", result);
+		assert!(result.is_ok(), "Failed to get users: {result:?}");
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 1, "Unexpected number of users");
@@ -318,7 +317,7 @@ mod tests {
 		let csv = CsvSource::new(csv_config);
 
 		let result = csv.read_csv();
-		assert!(result.is_ok(), "Failed to get users: {:?}", result);
+		assert!(result.is_ok(), "Failed to get users: {result:?}");
 
 		let users = result.expect("Failed to get users");
 		assert_eq!(users.len(), 2, "Unexpected number of users");

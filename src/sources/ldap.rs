@@ -535,7 +535,7 @@ mod tests {
 		};
 
 		let result = ldap_source.parse_user(entry);
-		assert!(result.is_ok(), "Failed to parse user: {:?}", result);
+		assert!(result.is_ok(), "Failed to parse user: {result:?}");
 		let user = result.unwrap();
 		assert_eq!(user.first_name, "Test");
 		assert_eq!(user.last_name, "User");
@@ -565,7 +565,7 @@ mod tests {
 			};
 
 			let result = ldap_source.parse_user(entry);
-			assert!(result.is_ok(), "Failed to parse user: {:?}", result);
+			assert!(result.is_ok(), "Failed to parse user: {result:?}");
 			let user = result.unwrap();
 			assert_eq!(user.enabled, parsed);
 		}

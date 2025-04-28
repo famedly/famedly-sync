@@ -237,13 +237,13 @@ mod tests {
 	#[tokio::test]
 	async fn test_sample_config() {
 		let config = Config::new(Path::new("./sample-configs/csv-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 		let config = Config::new(Path::new("./sample-configs/ldap-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 		let config = Config::new(Path::new("./sample-configs/ukt-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 		let config = Config::new(Path::new("./sample-configs/ad-config.sample.yaml"));
-		assert!(config.is_ok(), "Invalid config: {:?}", config);
+		assert!(config.is_ok(), "Invalid config: {config:?}");
 	}
 
 	#[test]

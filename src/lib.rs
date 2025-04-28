@@ -158,7 +158,7 @@ async fn sync_users(
 					.delete_user(&zitadel_id)
 					.await
 					.with_context(|| {
-						format!("Failed to delete user with Zitadel ID `{}`", zitadel_id,)
+						format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
 					})
 					.skip_zitadel_error("deleting user", skipped_errors);
 
@@ -214,7 +214,7 @@ async fn sync_users(
 					.delete_user(&zitadel_id)
 					.await
 					.with_context(|| {
-						format!("Failed to delete user with Zitadel ID `{}`", zitadel_id,)
+						format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
 					})
 					.skip_zitadel_error("deleting user", skipped_errors);
 

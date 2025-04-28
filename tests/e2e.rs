@@ -47,12 +47,12 @@ async fn test_e2e_user_id_encoding() {
 
 		ldap.create_user("Test", "User", "TU", login_name, None, uid, false).await;
 
-		perform_sync(config.clone()).await.map_err(|e| format!("Sync failed: {}", e))?;
+		perform_sync(config.clone()).await.map_err(|e| format!("Sync failed: {e}"))?;
 
 		let user = zitadel
 			.get_user_by_login_name(login_name)
 			.await
-			.map_err(|e| format!("Failed to get user: {}", e))?
+			.map_err(|e| format!("Failed to get user: {e}"))?
 			.ok_or_else(|| "User not found".to_owned())?;
 
 		match user.r#type {
@@ -95,7 +95,7 @@ async fn test_e2e_user_id_encoding() {
 
 	for (uid, email) in TEST_CASES {
 		if let Err(error) = verify_user_encoding(&mut ldap, &zitadel, config, uid, email).await {
-			panic!("Test failed for ID '{}': {}", uid, error);
+			panic!("Test failed for ID '{uid}': {error}");
 		}
 	}
 }
@@ -329,11 +329,11 @@ async fn test_e2e_sync_disabled_user() {
 				return;
 			}
 			_ => {
-				panic!("zitadel failed while searching for user: {}", error)
+				panic!("zitadel failed while searching for user: {error}")
 			}
 		}
 	} else {
-		panic!("disabled user was synced: {:?}", user);
+		panic!("disabled user was synced: {user:?}");
 	}
 }
 
@@ -1647,16 +1647,14 @@ async fn test_e2e_migrate_then_ldap_sync() {
 			let expected_hex_id = hex::encode(uid.as_bytes());
 			assert_eq!(
 				profile.nick_name, expected_hex_id,
-				"External ID not in hex encoding after LDAP sync for user '{}'",
-				email
+				"External ID not in hex encoding after LDAP sync for user '{email}'"
 			);
 			assert_eq!(
 				profile.first_name, "New First Name",
-				"Fist name was not updated by LDAP sync for user '{}'",
-				email
+				"Fist name was not updated by LDAP sync for user '{email}'"
 			);
 		}
-		_ => panic!("User lacks human details after LDAP sync for user '{}'", email),
+		_ => panic!("User lacks human details after LDAP sync for user '{email}'"),
 	}
 }
 
@@ -1766,14 +1764,13 @@ async fn run_migration_test(
 				let profile = human.profile.expect("User lacks profile");
 				assert_eq!(
 					profile.nick_name, expected_nick_name,
-					"Nickname encoding mismatch for user '{}'",
-					email
+					"Nickname encoding mismatch for user '{email}'"
 				);
 			} else {
-				panic!("User is not of type Human for user '{}'", email);
+				panic!("User is not of type Human for user '{email}'");
 			}
 		}
-		None => panic!("User type is None for user '{}'", email),
+		None => panic!("User type is None for user '{email}'"),
 	}
 }
 
@@ -1814,5 +1811,5 @@ fn run_migration_binary(is_dry_run: bool) {
 		.env("FAMEDLY_SYNC_CONFIG", config_file.to_str().unwrap())
 		.status()
 		.expect("Failed to execute migration binary");
-	assert!(status.success(), "Migration binary exited with status: {}", status);
+	assert!(status.success(), "Migration binary exited with status: {status}");
 }

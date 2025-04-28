@@ -173,8 +173,7 @@ mod tests {
 		let detected = detect_database_encoding(users);
 		assert_eq!(
 			detected, expected_encoding,
-			"Expected {:?} but got {:?}",
-			expected_encoding, detected
+			"Expected {expected_encoding:?} but got {detected:?}"
 		);
 	}
 
