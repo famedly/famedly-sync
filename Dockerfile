@@ -1,4 +1,4 @@
-FROM docker-oss.nexus.famedly.de/rust-container:nightly as builder
+FROM docker-oss.nexus.famedly.de/rust-container:nightly@sha256:c3804308b121e2b36dcbc8a94dd278a9596b47226d276a12ec57d636183a1e4e as builder
 ARG CARGO_NET_GIT_FETCH_WITH_CLI=true
 ARG FAMEDLY_CRATES_REGISTRY
 ARG CARGO_HOME
@@ -20,7 +20,7 @@ COPY . /app
 WORKDIR /app
 RUN cargo auditable build --release
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:90522eeb7e5923ee2b871c639059537b30521272f10ca86fdbbbb2b75a8c40cd
 RUN apt update && apt install ca-certificates curl -y
 RUN mkdir -p /opt/famedly-sync
 WORKDIR /opt/famedly-sync
