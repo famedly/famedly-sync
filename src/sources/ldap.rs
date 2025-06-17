@@ -35,10 +35,17 @@ impl Source for LdapSource {
 
 		let connection_result = ldap3::drive!(conn);
 
-		ldap.with_timeout(Duration::from_secs(self.ldap_config.timeout))
-			.simple_bind(&self.ldap_config.bind_dn, &self.ldap_config.bind_password)
-			.await?
-			.non_error()?;
+		let req = ldap.with_timeout(Duration::from_secs(self.ldap_config.timeout));
+
+		match self.ldap_config.authentication {
+			LdapAuth::Simple { bind_dn, bind_password } => {
+				req.simple_bind(&self.ldap_config.bind_dn, &self.ldap_config.bind_password)
+			}
+			LdapAuth::GSSAPI { server_fqdn } => req.sasl_gssapi_bind(server_fqdn),
+			LdapAuth::External {} => req.sasl_external_bind(),
+		}
+		.await?
+		.non_error()?;
 
 		// We *could* use the streaming search instead, as that
 		// *could* let up on memory pressure, however we end up
@@ -209,12 +216,10 @@ fn read_search_entry(entry: &SearchEntry, attribute: &AttributeMapping) -> Resul
 pub struct LdapSourceConfig {
 	/// The URL of the LDAP/AD server
 	pub url: Url,
+	/// The LDAP binding scheme to authenticate with
+	pub authentication: LdapAuth,
 	/// The base DN for searching users
 	pub base_dn: String,
-	/// The DN to bind for authentication
-	pub bind_dn: String,
-	/// The password for the bind DN
-	pub bind_password: String,
 	/// Filter to apply when searching for users, e.g., (objectClass=person) DO
 	/// NOT FILTER STATUS!
 	pub user_filter: String,
@@ -231,6 +236,28 @@ pub struct LdapSourceConfig {
 	pub use_attribute_filter: bool,
 	/// TLS-related configuration
 	pub tls: Option<LdapTlsConfig>,
+}
+
+/// LDAP auth configuration
+pub enum LdapAuth {
+	/// Use a simple bind; this is secure with LDAPs, but modern AD
+	/// doesn't support this starting October 2025.
+	Simple {
+		/// The DN to bind for authentication
+		bind_dn: String,
+		/// The password for the bind DN
+		bind_password: String,
+	},
+	/// Do a SASL GSSAPI bind; this is necessary on AD servers with
+	/// particularly strict settings. Kerberos is used for
+	/// authentication in this instance.
+	///
+	/// For TLS connections, the channel binding token is supplied.
+	GSSAPI { server_fqdn: String },
+	/// Do a SASL EXTERNAl bind; in this case the client identity must
+	/// be established by the connection method. In our case, this is
+	/// only practically possible with mTLS.
+	External {},
 }
 
 #[anyhow_trace::anyhow_trace]
