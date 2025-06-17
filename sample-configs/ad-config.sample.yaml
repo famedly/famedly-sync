@@ -26,11 +26,12 @@ sources:
     url: ldap://ldap.example.invalid
     # The base DN whose users to sync.
     base_dn: ou=testorg,dc=example,dc=org
-    # The DN to bind - this should be a user with sufficient permissions
-    # to read the above DN.
-    bind_dn: cn=admin,dc=example,dc=org
-    # The password of the bound user.
-    bind_password: adminpassword
+    authentication:
+      # The DN to bind - this should be a user with sufficient permissions
+      # to read the above DN.
+      bind_dn: cn=admin,dc=example,dc=org
+      # The password of the bound user.
+      bind_password: adminpassword
     # The LDAP filter to identify user entries.
     user_filter: "(memberOf=cn=App)"
     # The LDAP connection timeout
