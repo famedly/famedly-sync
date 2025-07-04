@@ -129,10 +129,6 @@ async fn sync_users(
 	skipped_errors: &SkippedErrors,
 	sync_users: &mut VecDeque<User>,
 ) -> Result<()> {
-	// Treat any disabled users as deleted, so we simply pretend they
-	// are not in the list
-	sync_users.retain(|user| user.enabled);
-
 	let mut stream = pin!(zitadel.list_users()?);
 
 	let mut source_user = sync_users.pop_front();
@@ -151,16 +147,11 @@ async fn sync_users(
 				break;
 			}
 
-			// Excess Zitadel users are not present in the sync
-			// source, so we delete them
+			// Excess Zitadel users not present in the sync source
 			(None, Some((zitadel_id, _))) => {
-				zitadel
-					.delete_user(&zitadel_id)
-					.await
-					.with_context(|| {
-						format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
-					})
-					.skip_zitadel_error("deleting user", skipped_errors);
+				tracing::warn!(
+					"Zitadel user `{zitadel_id}` is not present in the sync source, keeping it in Zitadel"
+				);
 
 				zitadel_user = stream.next().await.transpose()?;
 			}
@@ -168,55 +159,77 @@ async fn sync_users(
 			// Excess sync source users are not yet in Zitadel, so
 			// we import them
 			(Some(new_user), None) => {
-				zitadel
-					.import_user(&new_user)
-					.await
-					.with_context(|| {
-						format!("Failed to import user `{}`", new_user.external_user_id)
-					})
-					.skip_zitadel_error("importing user", skipped_errors);
+				if !new_user.enabled {
+					tracing::warn!(
+						"Excess sync source user `{}` is disabled, skipping import",
+						new_user.external_user_id
+					);
+				} else {
+					zitadel
+						.import_user(&new_user)
+						.await
+						.with_context(|| {
+							format!("Failed to import user `{}`", new_user.external_user_id)
+						})
+						.skip_zitadel_error("importing user", skipped_errors);
+				}
 
 				source_user = sync_users.pop_front();
 			}
 
 			// If the sync source user matches the Zitadel user, the
-			// user is already synced and we can move on
-			(Some(new_user), Some((_, existing_user))) if new_user == existing_user => {
+			// user is already synced
+			(Some(new_user), Some((zitadel_id, existing_user))) if new_user == existing_user => {
+				if !new_user.enabled {
+					// If the user is disabled in the source, delete from Zitadel
+					// This will retroactively remove disabled users
+					zitadel
+						.delete_user(&zitadel_id)
+						.await
+						.with_context(|| {
+							format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
+						})
+						.skip_zitadel_error("deleting user", skipped_errors);
+				}
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();
 			}
 
-			// If the user ID of the user to be synced to Zitadel is <
+			// If the user ID of the user to be synced to Zitadel is less than
 			// the user ID of the current Zitadel user, we found a new
 			// user which we should be importing
 			(Some(new_user), Some((_, existing_user)))
 				if new_user.external_user_id < existing_user.external_user_id =>
 			{
-				zitadel
-					.import_user(&new_user)
-					.await
-					.with_context(|| {
-						format!("Failed to import user `{}`", new_user.external_user_id,)
-					})
-					.skip_zitadel_error("importing user", skipped_errors);
+				if !new_user.enabled {
+					tracing::warn!(
+						"New sync source user `{}` is disabled, skipping import",
+						new_user.external_user_id
+					);
+				} else {
+					zitadel
+						.import_user(&new_user)
+						.await
+						.with_context(|| {
+							format!("Failed to import user `{}`", new_user.external_user_id,)
+						})
+						.skip_zitadel_error("importing user", skipped_errors);
+				}
 
 				source_user = sync_users.pop_front();
 				// Don't fetch the next zitadel user yet
 			}
 
-			// If the user ID of the user to be synced to Zitadel is >
-			// the user ID of the current Zitadel user, the Zitadel
-			// user needs to be deleted
+			// If the user ID of the user to be synced to Zitadel is greater than
+			// the user ID of the current Zitadel user, it means Zitadel has a user that the sync
+			// source is missing - so we just ignore it and move to next Zitadel user
+			// as we still want to keep this outstanding record in Zitadel for safety reasons
 			(Some(new_user), Some((zitadel_id, existing_user)))
 				if new_user.external_user_id > existing_user.external_user_id =>
 			{
-				zitadel
-					.delete_user(&zitadel_id)
-					.await
-					.with_context(|| {
-						format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
-					})
-					.skip_zitadel_error("deleting user", skipped_errors);
+				tracing::warn!(
+					"Zitadel user `{zitadel_id}` is not present in the sync source, keeping it in Zitadel"
+				);
 
 				zitadel_user = stream.next().await.transpose()?;
 				// Don't move to the next source user yet
@@ -228,14 +241,24 @@ async fn sync_users(
 			(Some(new_user), Some((zitadel_id, existing_user)))
 				if new_user.external_user_id == existing_user.external_user_id =>
 			{
-				zitadel
-					.update_user(&zitadel_id, &existing_user, &new_user)
-					.await
-					.with_context(|| {
-						format!("Failed to update user `{}`", new_user.external_user_id,)
-					})
-					.skip_zitadel_error("updating user", skipped_errors);
-
+				if !new_user.enabled {
+					// If the user is disabled in the source, delete from Zitadel
+					zitadel
+						.delete_user(&zitadel_id)
+						.await
+						.with_context(|| {
+							format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
+						})
+						.skip_zitadel_error("deleting user", skipped_errors);
+				} else {
+					zitadel
+						.update_user(&zitadel_id, &existing_user, &new_user)
+						.await
+						.with_context(|| {
+							format!("Failed to update user `{}`", new_user.external_user_id,)
+						})
+						.skip_zitadel_error("updating user", skipped_errors);
+				}
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();
 			}

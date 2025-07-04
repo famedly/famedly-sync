@@ -203,9 +203,29 @@ async fn test_e2e_user_id_sync_ordering() {
 		}
 	}
 
-	// Finally delete users in reverse order
+	// Delete users
 	for user in TEST_USERS.iter().rev() {
 		ldap.delete_user(user.uid).await;
+	}
+
+	// Final sync
+	perform_sync(config.clone()).await.expect("Deletion sync failed");
+
+	// Verify all users were NOT deleted (because they are not disabled, just
+	// missing from LDAP)
+	for user in TEST_USERS {
+		let result = zitadel.get_user_by_login_name(user.email).await.expect("failed to find user");
+		assert!(result.is_some());
+	}
+
+	// Recreate users again
+	for user in TEST_USERS {
+		ldap.create_user("Test", "User", "TU", user.email, Some(user.phone), user.uid, false).await;
+	}
+
+	// Finally disable users in reverse order
+	for user in TEST_USERS.iter().rev() {
+		ldap.change_user(user.uid, vec![("shadowFlag", HashSet::from(["514"]))]).await;
 	}
 
 	// Final sync
@@ -472,15 +492,26 @@ async fn test_e2e_sync_email_change() {
 
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
-async fn test_e2e_sync_deletion() {
+async fn test_e2e_sync_safe_deletion() {
 	let mut ldap = Ldap::new().await;
 	ldap.create_user(
 		"bob",
 		"Tables",
 		"Bobby3",
-		"deleted@famedly.de",
+		"to_be_deleted@famedly.de",
 		Some("+12015550124"),
-		"deleted",
+		"to_be_deleted",
+		false,
+	)
+	.await;
+
+	ldap.create_user(
+		"edward",
+		"Riggs",
+		"Edward",
+		"to_be_disabled@famedly.de",
+		Some("+12015550125"),
+		"to_be_disabled",
 		false,
 	)
 	.await;
@@ -489,15 +520,31 @@ async fn test_e2e_sync_deletion() {
 	perform_sync(config.clone()).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
-	let user =
-		zitadel.get_user_by_login_name("deleted@famedly.de").await.expect("failed to find user");
+	let user = zitadel
+		.get_user_by_login_name("to_be_deleted@famedly.de")
+		.await
+		.expect("failed to find user");
+	assert!(user.is_some());
+	let user = zitadel
+		.get_user_by_login_name("to_be_disabled@famedly.de")
+		.await
+		.expect("failed to find user");
 	assert!(user.is_some());
 
-	ldap.delete_user("deleted").await;
+	ldap.delete_user("to_be_deleted").await;
+	ldap.change_user("to_be_disabled", vec![("shadowFlag", HashSet::from(["514"]))]).await;
 
 	perform_sync(config.clone()).await.expect("syncing failed");
 
-	let user = zitadel.get_user_by_login_name("deleted@famedly.de").await;
+	// Deleted LDAP users should persist in Zitadel for safety reasons
+	let user = zitadel
+		.get_user_by_login_name("to_be_deleted@famedly.de")
+		.await
+		.expect("failed to find user");
+	assert!(user.is_some());
+
+	// Disabled LDAP users should be deleted from Zitadel
+	let user = zitadel.get_user_by_login_name("to_be_disabled@famedly.de").await;
 	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
 
 	assert!(zitadel.get_user_by_login_name("another_user@example.test").await.is_ok());
@@ -1304,12 +1351,23 @@ async fn test_e2e_ldap_with_ukt_sync() {
 
 	ldap.create_user(
 		"John",
+		"Persist Deletion",
+		"Johnny",
+		"persist_deletion@famedly.de",
+		Some("+12015551111"),
+		"persist_deletion",
+		false,
+	)
+	.await;
+
+	ldap.create_user(
+		"John",
 		"Not To Be There Later",
 		"Johnny",
 		"not_to_be_there_later@famedly.de",
 		Some("+12015551111"),
 		"not_to_be_there_later",
-		false,
+		false, // Start enabled, later will be disabled
 	)
 	.await;
 
@@ -1348,6 +1406,7 @@ async fn test_e2e_ldap_with_ukt_sync() {
 
 	let zitadel = open_zitadel_connection().await;
 
+	// Should be deleted based on email
 	let user = zitadel.get_user_by_login_name("not_to_be_there@famedly.de").await;
 	assert!(user.is_err_and(|error| matches!(error,
 	ZitadelError::TonicResponseError(status) if status.code() ==
@@ -1382,7 +1441,8 @@ async fn test_e2e_ldap_with_ukt_sync() {
 
 	ldap.change_user("to_be_changed", vec![("telephoneNumber", HashSet::from(["+12015550123"]))])
 		.await;
-	ldap.delete_user("not_to_be_there_later").await;
+	ldap.delete_user("persist_deletion").await; // Should not be deleted
+	ldap.change_user("not_to_be_there_later", vec![("shadowFlag", HashSet::from(["514"]))]).await; // Should be deleted
 
 	perform_sync(ldap_config.clone()).await.expect("syncing failed");
 
@@ -1400,6 +1460,15 @@ async fn test_e2e_ldap_with_ukt_sync() {
 		}
 		_ => panic!("human user became a machine user?"),
 	}
+
+	// Should not be deleted because it's just missing from LDAP but wasn't disabled
+	let user = zitadel
+		.get_user_by_login_name("persist_deletion@famedly.de")
+		.await
+		.expect("could not query Zitadel users");
+	assert!(user.is_some());
+
+	// Should be deleted because it's disabled
 	let user = zitadel.get_user_by_login_name("not_to_be_there_later@famedly.de").await;
 	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
 }

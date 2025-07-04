@@ -1,5 +1,5 @@
 //! Helper functions for submitting data to Zitadel
-use std::path::PathBuf;
+use std::{path::PathBuf, pin::pin};
 
 use anyhow_ext::{Context, Result};
 use base64::prelude::{BASE64_STANDARD, Engine};
@@ -263,6 +263,42 @@ impl<'s> Zitadel<'s> {
 				if error.to_string().contains("PHONE-so0wa") {
 					user.reset_phone();
 					self.zitadel_client.create_human_user(user).await?;
+				} else if error.to_string().contains("User already exists") {
+					// Handle the case where a user with the same email already exists
+					// This can happen when the external ID changes but the email stays the same
+					// Since we are keeping deleted users in Zitadel for safety reasons unless they
+					// are explicitly disabled in LDAP, we need to update the Zitadel user instead
+					// of how we did it previously (deleting old and creating a new one)
+					tracing::info!(
+						"User with a different external ID ({}) having the same email already exists in Zitadel, attempting to update",
+						imported_user.external_user_id
+					);
+
+					// Look up the existing user by email
+					let mut existing_users =
+						pin!(self.get_users_by_email(vec![imported_user.email.clone()])?);
+
+					if let Some((existing_zitadel_id, existing_user)) =
+						existing_users.next().await.transpose()?
+					{
+						tracing::debug!(
+							"Found existing user with Zitadel ID {} by email, updating from external ID {} to {} and possibly other changes",
+							existing_zitadel_id,
+							existing_user.external_user_id,
+							imported_user.external_user_id
+						);
+
+						// Update the existing user with the new external ID and other changes
+						self.update_user(&existing_zitadel_id, &existing_user, imported_user)
+							.await?;
+					} else {
+						// This shouldn't happen, but if it does, re-throw the original error
+						tracing::debug!(
+							"Failed to find existing user having different external ID ({}) by email",
+							imported_user.external_user_id
+						);
+						anyhow::bail!(error);
+					}
 				} else {
 					anyhow::bail!(error)
 				}
