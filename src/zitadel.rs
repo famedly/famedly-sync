@@ -474,7 +474,7 @@ struct Skippable;
 
 impl Skippable {
 	/// Helper function to use with `[StreamExt::filter_map]`
-	#[allow(clippy::unused_async)]
+	#[allow(clippy::unused_async, clippy::collapsible_if)]
 	#[tracing::instrument(skip_all)]
 	pub async fn filter_out<T: Send>(res: Result<T>) -> Option<Result<T>> {
 		// should we `skipped_errors.notify_error()` here?
