@@ -149,19 +149,19 @@ async fn sync_users(
 
 			// Excess Zitadel users not present in the sync source
 			(None, Some((zitadel_id, _))) => {
-				tracing::warn!(
-					"Zitadel user `{zitadel_id}` is not present in the sync source, keeping it in Zitadel"
+				tracing::debug!(
+					"Zitadel user `{zitadel_id}` is not present in the sync source, but won't be deleted."
 				);
 
 				zitadel_user = stream.next().await.transpose()?;
 			}
 
-			// Excess sync source users are not yet in Zitadel, so
-			// we import them
+			// Excess sync source users are not yet in Zitadel,
+			// so we import them
 			(Some(new_user), None) => {
 				if !new_user.enabled {
-					tracing::warn!(
-						"Excess sync source user `{}` is disabled, skipping import",
+					tracing::debug!(
+						"User with external ID {} would have been imported, but was skipped as they are disabled.",
 						new_user.external_user_id
 					);
 				} else {
@@ -181,8 +181,13 @@ async fn sync_users(
 			// user is already synced
 			(Some(new_user), Some((zitadel_id, existing_user))) if new_user == existing_user => {
 				if !new_user.enabled {
-					// If the user is disabled in the source, delete from Zitadel
 					// This will retroactively remove disabled users
+					tracing::info!(
+						"User {} with external ID {} is already synced, but will be deleted as they are disabled.",
+						zitadel_id,
+						new_user.external_user_id
+					);
+
 					zitadel
 						.delete_user(&zitadel_id)
 						.await
@@ -202,8 +207,8 @@ async fn sync_users(
 				if new_user.external_user_id < existing_user.external_user_id =>
 			{
 				if !new_user.enabled {
-					tracing::warn!(
-						"New sync source user `{}` is disabled, skipping import",
+					tracing::debug!(
+						"New sync source user `{}` is disabled, skipping import.",
 						new_user.external_user_id
 					);
 				} else {
@@ -227,8 +232,8 @@ async fn sync_users(
 			(Some(new_user), Some((zitadel_id, existing_user)))
 				if new_user.external_user_id > existing_user.external_user_id =>
 			{
-				tracing::warn!(
-					"Zitadel user `{zitadel_id}` is not present in the sync source, keeping it in Zitadel"
+				tracing::debug!(
+					"Zitadel user `{zitadel_id}` is not present in the sync source, but won't be deleted."
 				);
 
 				zitadel_user = stream.next().await.transpose()?;
@@ -242,6 +247,12 @@ async fn sync_users(
 				if new_user.external_user_id == existing_user.external_user_id =>
 			{
 				if !new_user.enabled {
+					tracing::info!(
+						"User {} with external ID {} would have been updated, but will be deleted as they are disabled.",
+						zitadel_id,
+						new_user.external_user_id
+					);
+
 					// If the user is disabled in the source, delete from Zitadel
 					zitadel
 						.delete_user(&zitadel_id)
@@ -251,6 +262,12 @@ async fn sync_users(
 						})
 						.skip_zitadel_error("deleting user", skipped_errors);
 				} else {
+					tracing::info!(
+						"User {} with external ID {} will be updated.",
+						zitadel_id,
+						new_user.external_user_id
+					);
+
 					zitadel
 						.update_user(&zitadel_id, &existing_user, &new_user)
 						.await
@@ -259,6 +276,7 @@ async fn sync_users(
 						})
 						.skip_zitadel_error("updating user", skipped_errors);
 				}
+
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();
 			}

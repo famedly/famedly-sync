@@ -281,7 +281,7 @@ impl<'s> Zitadel<'s> {
 					if let Some((existing_zitadel_id, existing_user)) =
 						existing_users.next().await.transpose()?
 					{
-						tracing::debug!(
+						tracing::info!(
 							"Found existing user with Zitadel ID {} by email, updating from external ID {} to {} and possibly other changes",
 							existing_zitadel_id,
 							existing_user.external_user_id,
@@ -293,11 +293,10 @@ impl<'s> Zitadel<'s> {
 							.await?;
 					} else {
 						// This shouldn't happen, but if it does, re-throw the original error
-						tracing::debug!(
-							"Failed to find existing user having different external ID ({}) by email",
+						anyhow::bail!(error.context(format!(
+							"Failed to find existing user having different external ID {} by email",
 							imported_user.external_user_id
-						);
-						anyhow::bail!(error);
+						)));
 					}
 				} else {
 					anyhow::bail!(error)
