@@ -67,6 +67,13 @@ impl Config {
 	fn validate(mut self) -> Result<Self> {
 		self.zitadel.url = validate_zitadel_url(self.zitadel.url)?;
 
+		// Validate that idp_id is provided when sso_login feature flag is enabled
+		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) && self.zitadel.idp_id.is_none() {
+			bail!(
+				"idp_id is required in zitadel configuration when sso_login feature flag is enabled"
+			);
+		}
+
 		Ok(self)
 	}
 }
@@ -329,5 +336,112 @@ mod tests {
 		}
 
 		assert_eq!(sample_config, loaded_config);
+	}
+
+	#[test]
+	fn test_idp_id_required_when_sso_login_enabled() {
+		let tempdir = TempDir::new().expect("failed to initialize tempdir");
+
+		// Create config with sso_login enabled but no idp_id
+		let config_without_idp = indoc! {r#"
+			zitadel:
+			  url: http://localhost:8080
+			  key_file: tests/environment/zitadel/service-user.json
+			  organization_id: 1
+			  project_id: 1
+
+			sources:
+			  test: 1
+
+			feature_flags: [sso_login]
+		"#};
+
+		let file_path = tempdir.path().join("config.yaml");
+		let mut config_file = File::create(&file_path).expect("failed to create config file");
+		config_file
+			.write_all(config_without_idp.as_bytes())
+			.expect("Failed to write config file content");
+
+		let result = Config::new(file_path.as_path());
+		assert!(
+			result.is_err(),
+			"Config should fail when sso_login is enabled but idp_id is missing"
+		);
+
+		let error_message = result.unwrap_err().to_string();
+		assert!(error_message.contains(
+			"idp_id is required in zitadel configuration when sso_login feature flag is enabled"
+		));
+	}
+
+	#[test]
+	fn test_idp_id_present_when_sso_login_enabled() {
+		let tempdir = TempDir::new().expect("failed to initialize tempdir");
+
+		// Create config with sso_login enabled and idp_id present
+		let config_with_idp = indoc! {r#"
+			zitadel:
+			  url: http://localhost:8080
+			  key_file: tests/environment/zitadel/service-user.json
+			  organization_id: 1
+			  project_id: 1
+			  idp_id: 1
+
+			sources:
+			  test: 1
+
+			feature_flags: [sso_login]
+		"#};
+
+		let file_path = tempdir.path().join("config.yaml");
+		let mut config_file = File::create(&file_path).expect("failed to create config file");
+		config_file
+			.write_all(config_with_idp.as_bytes())
+			.expect("Failed to write config file content");
+
+		let result = Config::new(file_path.as_path());
+		assert!(
+			result.is_ok(),
+			"Config should pass when sso_login is enabled and idp_id is present"
+		);
+
+		let config = result.unwrap();
+		assert!(config.feature_flags.is_enabled(FeatureFlag::SsoLogin));
+		assert!(config.zitadel.idp_id.is_some());
+	}
+
+	#[test]
+	fn test_idp_id_optional_when_sso_login_disabled() {
+		let tempdir = TempDir::new().expect("failed to initialize tempdir");
+
+		// Create config without sso_login and without idp_id
+		let config_without_sso_login = indoc! {r#"
+			zitadel:
+			  url: http://localhost:8080
+			  key_file: tests/environment/zitadel/service-user.json
+			  organization_id: 1
+			  project_id: 1
+
+			sources:
+			  test: 1
+
+			feature_flags: []
+		"#};
+
+		let file_path = tempdir.path().join("config.yaml");
+		let mut config_file = File::create(&file_path).expect("failed to create config file");
+		config_file
+			.write_all(config_without_sso_login.as_bytes())
+			.expect("Failed to write config file content");
+
+		let result = Config::new(file_path.as_path());
+		assert!(
+			result.is_ok(),
+			"Config should pass when sso_login is disabled regardless of idp_id presence"
+		);
+
+		let config = result.unwrap();
+		assert!(!config.feature_flags.is_enabled(FeatureFlag::SsoLogin));
+		assert!(config.zitadel.idp_id.is_none());
 	}
 }

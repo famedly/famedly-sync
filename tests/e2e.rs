@@ -1438,7 +1438,11 @@ async fn test_e2e_sso_linking() {
 	assert!(!idps.is_empty(), "User should have IDP links");
 
 	let idp = idps.first().expect("No IDP link found");
-	assert_eq!(idp.idp_id, config.zitadel.idp_id, "IDP link should match configured IDP");
+	assert_eq!(
+		idp.idp_id,
+		*config.zitadel.idp_id.as_ref().unwrap(),
+		"IDP link should match configured IDP"
+	);
 	assert_eq!(idp.provided_user_id, test_uid, "IDP provided_user_id should match plain LDAP uid");
 	assert_eq!(idp.user_id, user.id, "IDP user_id should match Zitadel user id");
 	assert_eq!(

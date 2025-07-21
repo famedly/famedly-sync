@@ -225,10 +225,15 @@ impl<'s> Zitadel<'s> {
 		};
 
 		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
+			let idp_id = self
+				.zitadel_config
+				.idp_id
+				.as_ref()
+				.context("idp_id is required when sso_login feature flag is enabled")?;
 			user.set_idp_links(vec![
 				IdpLink::new()
 					.with_user_id(get_zitadel_encoded_id(imported_user.get_external_id_bytes()?))
-					.with_idp_id(self.zitadel_config.idp_id.clone())
+					.with_idp_id(idp_id.clone())
 					.with_user_name(imported_user.email.clone()),
 			]);
 		}
@@ -520,6 +525,6 @@ pub struct ZitadelConfig {
 	pub organization_id: String,
 	/// Project ID provided by Famedly Zitadel
 	pub project_id: String,
-	/// IDP ID provided by Famedly Zitadel
-	pub idp_id: String,
+	/// IDP ID provided by Famedly Zitadel (only required when SSO is enabled)
+	pub idp_id: Option<String>,
 }

@@ -201,7 +201,7 @@ certificates.
 
 ## Deployment
 
-The easiest way to deploy this tool is using our published docker
+The easiest way to run this tool is using our published docker
 container through our [composefile](./docker-compose.yaml).
 
 To prepare for use, we need to provide a handful of files in an `opt`
@@ -214,6 +214,8 @@ opt
 ├── certs
 │  └── test-ldap.crt   # The TLS certificate of the LDAP server
 ├── config.yaml        # Example configs can be found in [./sample-configs](./sample-configs)
+├── csv
+│  └── users.csv       # Optional: if using CSV source, this would hold the user data
 └── service-user.json  # Provided by famedly
 ```
 
@@ -229,6 +231,9 @@ Or alternatively, without `docker compose`:
 ```
 docker run --rm -it --network host --volume ./opt:/opt/famedly-sync docker-oss.nexus.famedly.de/famedly-sync-agent:latest
 ```
+
+> [!NOTE]
+> Famedly can provide a pre-recorded walkthrough video of this process upon request.
 
 ### Kubernetes Deployment
 

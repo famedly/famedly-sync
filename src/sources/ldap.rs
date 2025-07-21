@@ -441,7 +441,6 @@ mod tests {
           key_file: tests/environment/zitadel/service-user.json
           organization_id: 1
           project_id: 1
-          idp_id: 1
 
         sources:
           ldap:

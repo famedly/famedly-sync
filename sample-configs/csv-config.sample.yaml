@@ -8,16 +8,16 @@ zitadel:
   organization_id: 278274756195721220
   # The project to grant users access to.
   project_id: 278274945274880004
-  # The identity provider ID to enable SSO login for
+  # The identity provider ID to enable SSO login for (only required when sso_login feature flag is enabled)
   #
   # WARNING: This user *must* be scoped to the specific org/project,
   # as famedly-sync does not limit syncs to the configured org/project
   # by itself.
-  idp_id: 281430143275106308
+  # idp_id: 000000000000000000
 
 feature_flags:
-  - verify_email      # Whether to ask users to verify their email addresses post sync
-  - verify_phone      # Whether to ask users to verify their phone numbers post sync
+  - verify_email # Whether to ask users to verify their email addresses post sync
+  - verify_phone # Whether to ask users to verify their phone numbers post sync
   # - sso_login       # Whether to enable SSO login - Please note that his has some drawbacks and limitations, see the help center article for more information
   # - dry_run         # Disable syncing users to Zitadel - Intended to ensure syncs are working before productive deployment
   # - deactivate_only # Only deactivate users, do not create or update them.
@@ -30,5 +30,5 @@ sources:
   csv:
     # Path to the CSV file to read from.
     # Expected structure of the CSV file is as follows:
-    # email,first_name,last_name,phone
-    file_path:  ./tests/environment/files/test-users.csv
+    # email,first_name,last_name,phone,localpart (localpart is optional)
+    file_path: /opt/famedly-sync/csv/users.csv
