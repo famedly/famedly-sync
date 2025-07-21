@@ -82,12 +82,12 @@ fn detect_database_encoding(users: Vec<SyncUser>) -> ExternalIdEncoding {
 		total += 1;
 
 		// Check hex first (more restrictive)
-		if nick_name.chars().all(|c| c.is_ascii_hexdigit()) && nick_name.len() % 2 == 0 {
+		if nick_name.chars().all(|c| c.is_ascii_hexdigit()) && nick_name.len().is_multiple_of(2) {
 			hex_count += 1;
 		}
 
 		// Check base64 signature
-		if nick_name.len() % 4 == 0
+		if nick_name.len().is_multiple_of(4)
 			&& nick_name
 				.chars()
 				.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')

@@ -10,5 +10,4 @@ jobs:
     uses: famedly/backend-build-workflows/.github/workflows/docker-backend.yml@main
     secrets: inherit
     with:
-      name: famedly-sync-agent
-      oss: true
+      targets: famedly-sync-agent

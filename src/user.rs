@@ -110,7 +110,7 @@ impl User {
 				tracing::warn!(?self, "Skipping user due to empty uid");
 				return Ok(self.clone());
 			}
-			s if s.chars().all(|c| c.is_ascii_hexdigit()) && s.len() % 2 == 0 => {
+			s if s.chars().all(|c| c.is_ascii_hexdigit()) && s.len().is_multiple_of(2) => {
 				// Looks like hex encoding
 				if expected_encoding != ExternalIdEncoding::Hex {
 					tracing::warn!(
@@ -125,7 +125,7 @@ impl User {
 			s if s
 				.chars()
 				.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
-				&& s.len() % 4 == 0 =>
+				&& s.len().is_multiple_of(4) =>
 			{
 				// Looks like base64 encoding
 				if expected_encoding != ExternalIdEncoding::Base64 {

@@ -437,11 +437,11 @@ impl Skippable {
 	#[tracing::instrument(skip_all)]
 	pub async fn filter_out<T: Send>(res: Result<T>) -> Option<Result<T>> {
 		// should we `skipped_errors.notify_error()` here?
-		if let Err(e) = res.as_ref() {
-			if e.is::<Skippable>() {
-				tracing::warn!("{e:?}");
-				return None;
-			}
+		if let Err(e) = res.as_ref()
+			&& e.is::<Skippable>()
+		{
+			tracing::warn!("{e:?}");
+			return None;
 		}
 		Some(res)
 	}
