@@ -1745,6 +1745,169 @@ async fn test_e2e_migrate_dry_run() {
 	run_migration_test(&dry_run_config, email, user_name, plain_id.clone(), plain_id).await;
 }
 
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_sync_user_already_exists() {
+	let config = ldap_config().await;
+	let mut ldap = Ldap::new().await;
+	let zitadel = open_zitadel_connection().await;
+
+	let email = "user_exists_test@famedly.de";
+	let initial_external_id = "user_v1";
+	let recreated_external_id = "user_v2";
+	let phone = "+12015550199";
+
+	ldap.create_user("Test", "User", "User, Test", email, Some(phone), initial_external_id, false)
+		.await;
+
+	// Initial sync - should create user normally
+	perform_sync(config.clone()).await.expect("Initial sync failed");
+
+	// Verify user was created with initial external ID
+	let user = zitadel
+		.get_user_by_login_name(email)
+		.await
+		.expect("Failed to get user after initial sync")
+		.expect("User not found after initial sync");
+
+	let initial_zitadel_id = user.id.clone();
+	match user.r#type {
+		Some(UserType::Human(human)) => {
+			let profile = human.profile.expect("User lacks profile");
+			assert_eq!(
+				profile.nick_name,
+				hex::encode(initial_external_id.as_bytes()),
+				"Initial external ID not encoded correctly"
+			);
+		}
+		_ => panic!("User is not human type"),
+	}
+
+	// Now change the external ID in LDAP by deleting and re-creating a new user
+	// with the same email
+	ldap.delete_user(initial_external_id).await;
+	ldap.create_user(
+		"Test",
+		"User",
+		"User, Test",
+		email,
+		Some(phone),
+		recreated_external_id,
+		false,
+	)
+	.await;
+
+	// Second sync - should trigger "User already exists" error handling
+	perform_sync(config.clone())
+		.await
+		.expect("Second sync failed - the 'Found existing user' flow should work");
+
+	// Verify user was updated with new external ID
+	let recreated_user = zitadel
+		.get_user_by_login_name(email)
+		.await
+		.expect("Failed to get user after update sync")
+		.expect("User not found after update sync");
+
+	// Should be the same user (same Zitadel ID)
+	assert_eq!(
+		recreated_user.id, initial_zitadel_id,
+		"User ID changed - should be same user updated"
+	);
+
+	match recreated_user.r#type {
+		Some(UserType::Human(human)) => {
+			let profile = human.profile.expect("Updated user lacks profile");
+			assert_eq!(
+				profile.nick_name,
+				hex::encode(recreated_external_id.as_bytes()),
+				"External ID was not updated correctly"
+			);
+
+			// Verify other fields are still correct
+			assert_eq!(profile.first_name, "Test", "First name should be preserved");
+			assert_eq!(profile.last_name, "User", "Last name should be preserved");
+
+			let phone_obj = human.phone.expect("Updated user lacks phone");
+			assert_eq!(phone_obj.phone, phone, "Phone should be preserved");
+		}
+		_ => panic!("Updated user is not human type"),
+	}
+}
+
+#[test(tokio::test)]
+#[test_log(default_log_filter = "debug")]
+async fn test_e2e_sync_user_already_exists_error_case() {
+	let config = ldap_config().await;
+	let mut ldap = Ldap::new().await;
+	let zitadel = open_zitadel_connection().await;
+
+	// Create a user directly in Zitadel (bypassing sync metadata)
+	// This simulates a user that exists in Zitadel but doesn't have metadata
+	// so will error out when the sync tools tries to find the user by email
+	let email = "user_exists_error_case@famedly.de";
+	let external_id = "user_error_case";
+	let phone = "+12015550222";
+
+	// Create user directly in Zitadel without localpart metadata
+	let user = ImportHumanUserRequest {
+		user_name: email.to_owned(),
+		profile: Some(Profile {
+			first_name: "Direct".to_owned(),
+			last_name: "User".to_owned(),
+			display_name: "User, Direct".to_owned(),
+			gender: Gender::Unspecified.into(),
+			nick_name: hex::encode("different_external_id".as_bytes()),
+			preferred_language: String::default(),
+		}),
+		email: Some(Email { email: email.to_owned(), is_email_verified: true }),
+		phone: Some(Phone { phone: phone.to_owned(), is_phone_verified: true }),
+		password: String::default(),
+		hashed_password: None,
+		password_change_required: false,
+		request_passwordless_registration: false,
+		otp_code: String::default(),
+		idps: vec![],
+	};
+
+	let user_id = zitadel
+		.create_human_user(&config.zitadel.organization_id, user)
+		.await
+		.expect("Failed to create user directly in Zitadel");
+
+	zitadel
+		.add_user_grant(
+			Some(config.zitadel.organization_id.clone()),
+			user_id,
+			config.zitadel.project_id.clone(),
+			None,
+			vec![FAMEDLY_USER_ROLE.to_owned()],
+		)
+		.await
+		.expect("Failed to create user grant");
+
+	// Now create a user in LDAP with the same email but different external ID
+	ldap.create_user("Test", "User", "User, Test", email, Some(phone), external_id, false).await;
+
+	// This sync should trigger the "User already exists" error
+	// But since the existing user lacks metadata (localpart),
+	// it will fail to find it in get_users_by_email due to the Skippable error
+	let result = perform_sync(config.clone()).await;
+
+	match result {
+		Ok(skipped_errors) => {
+			// If the sync completed, verify that errors were skipped
+			assert!(
+				skipped_errors.assert_no_errors().is_err(),
+				"Expected skipped errors but none occurred"
+			);
+		}
+		Err(err) => {
+			panic!("Expected sync to complete with skipped errors, but got fatal error: {err:?}");
+		}
+	}
+}
+
 /// Open a connection to the configured Zitadel backend
 async fn open_zitadel_connection() -> Zitadel {
 	let zitadel_config = ldap_config().await.zitadel.clone();

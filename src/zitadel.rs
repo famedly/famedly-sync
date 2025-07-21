@@ -263,7 +263,9 @@ impl<'s> Zitadel<'s> {
 				if error.to_string().contains("PHONE-so0wa") {
 					user.reset_phone();
 					self.zitadel_client.create_human_user(user).await?;
-				} else if error.to_string().contains("User already exists") {
+
+				// If the user already exists
+				} else if error.to_string().contains("V3-DKcYh") {
 					// Handle the case where a user with the same email already exists
 					// This can happen when the external ID changes but the email stays the same
 					// Since we are keeping deleted users in Zitadel for safety reasons unless they
@@ -278,26 +280,23 @@ impl<'s> Zitadel<'s> {
 					let mut existing_users =
 						pin!(self.get_users_by_email(vec![imported_user.email.clone()])?);
 
-					if let Some((existing_zitadel_id, existing_user)) =
-						existing_users.next().await.transpose()?
-					{
-						tracing::info!(
-							"Found existing user with Zitadel ID {} by email, updating from external ID {} to {} and possibly other changes",
-							existing_zitadel_id,
-							existing_user.external_user_id,
-							imported_user.external_user_id
-						);
+					let (existing_zitadel_id, existing_user) =
+						existing_users.next().await.transpose()?.with_context(|| {
+							format!(
+								"Failed to find existing user having different external ID {} by email",
+								imported_user.external_user_id
+							)
+						})?;
 
-						// Update the existing user with the new external ID and other changes
-						self.update_user(&existing_zitadel_id, &existing_user, imported_user)
-							.await?;
-					} else {
-						// This shouldn't happen, but if it does, re-throw the original error
-						anyhow::bail!(error.context(format!(
-							"Failed to find existing user having different external ID {} by email",
-							imported_user.external_user_id
-						)));
-					}
+					tracing::info!(
+						"Found existing user with Zitadel ID {} by email, updating from external ID {} to {} and possibly other changes",
+						existing_zitadel_id,
+						existing_user.external_user_id,
+						imported_user.external_user_id
+					);
+
+					// Update the existing user with the new external ID and other changes
+					self.update_user(&existing_zitadel_id, &existing_user, imported_user).await?;
 				} else {
 					anyhow::bail!(error)
 				}
