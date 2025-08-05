@@ -11,7 +11,7 @@ spec:
         spec:
           containers:
             - name: ldap-sync
-              image: docker-oss.nexus.famedly.de/famedly-sync-agent:v0.4.0
+              image: registry.famedly.net/docker-oss/famedly-sync-agent:v0.4.0
               imagePullPolicy: IfNotPresent
               volumeMounts:
                 - mountPath: /opt/famedly-sync/

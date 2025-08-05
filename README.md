@@ -114,7 +114,7 @@ itself. The binary can be executed as part of the same docker
 environment as `famedly-sync`:
 
 ```bash
-docker run --rm -it --network host --volume ./opt:/opt/famedly-sync docker-oss.nexus.famedly.de/famedly-sync-agent:latest /usr/local/bin/install-ids
+docker run --rm -it --network host --volume ./opt:/opt/famedly-sync registry.famedly.net/docker-oss/famedly-sync-agent:latest /usr/local/bin/install-ids
 ```
 
 It can also be executed with the `docker-compose.yaml` by adding
@@ -229,7 +229,7 @@ docker compose up
 Or alternatively, without `docker compose`:
 
 ```
-docker run --rm -it --network host --volume ./opt:/opt/famedly-sync docker-oss.nexus.famedly.de/famedly-sync-agent:latest
+docker run --rm -it --network host --volume ./opt:/opt/famedly-sync registry.famedly.net/docker-oss/famedly-sync-agent:latest
 ```
 
 > [!NOTE]
@@ -244,7 +244,7 @@ to deploy this tool as a CronJob on a Kubernetes cluster.
 kubectl create -f ldap-sync-deployment.yaml
 ```
 
-It will run `docker-oss.nexus.famedly.de/famedly-sync-agent:v0.4.0` once per day
+It will run `registry.famedly.net/docker-oss/famedly-sync-agent:v0.4.0` once per day
 at 00:00 in the namespace `ldap-sync`. It requires a ConfigMap named `famedly-sync`
 to be present in the `ldap-sync` namespace. The ConfigMap can be created using
 

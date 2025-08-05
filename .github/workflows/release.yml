@@ -26,7 +26,7 @@ jobs:
             runner: arm-ubuntu-latest-8core
             asset_name: ${{ github.event.repository.name }}-linux-aarch64-latest
     runs-on: ${{ matrix.runner }}
-    container: docker-oss.nexus.famedly.de/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
       contents: read
       attestations: write
     runs-on: ubuntu-latest
-    container: docker-oss.nexus.famedly.de/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -146,4 +146,3 @@ jobs:
           files: artifacts/*
           prerelease: "${{ contains(github.ref_name, 'rc') }}"
           generate_release_notes: true
-
