@@ -58,7 +58,7 @@ jobs:
         run: "mv target/release/${{ github.event.repository.name }} target/release/${{ matrix.asset_name }}"
 
       - name: Attest
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: '${{ github.workspace }}/target/release/${{ matrix.asset_name }}'
 
@@ -110,11 +110,11 @@ jobs:
         run: cargo cyclonedx -f json
 
       - name: Attest SPDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.spdx.json'
       - name: Attest CycloneDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.cdx.json'
 
@@ -134,7 +134,7 @@ jobs:
     needs: [build, sbom]
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: release-*
           path: artifacts
