@@ -19,11 +19,11 @@ concurrency:
 # Defined CI jobs.
 jobs:
   simple-checks:
-    container: registry.famedly.net/docker-oss/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly@sha256:69f4d4015f8174adcd003ea87d032f9b252fa3b43e90b877751a0fd8e4a112c9
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
     - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
       with:
@@ -32,7 +32,7 @@ jobs:
         gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
     - name: Caching
-      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+      uses: Swatinem/rust-cache@a8b36e3f740d2ae4fa6e44a424a7b296af51cbef
       with:
         cache-on-failure: true
         cache-all-crates: true
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
     - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
       with:
@@ -73,7 +73,7 @@ jobs:
       run: rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
 
     - name: Caching
-      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+      uses: Swatinem/rust-cache@a8b36e3f740d2ae4fa6e44a424a7b296af51cbef
       with:
         cache-on-failure: true
         cache-all-crates: true
@@ -96,12 +96,12 @@ jobs:
         docker compose --project-directory ./tests/environment logs
 
     - name: Codecov - Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
       with:
         token: ${{secrets.CODECOV_TOKEN}}
         files: lcov.info
 
     - name: Codecov - Upload test results
-      uses: codecov/test-results-action@v1
+      uses: codecov/test-results-action@47f89e9acb64b76debcd5ea40642d25a4adced9f # v1
       with:
         token: ${{secrets.CODECOV_TOKEN}}
