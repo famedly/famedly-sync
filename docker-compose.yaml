@@ -1,6 +1,6 @@
 services:
   famedly-sync-agent:
-    image: registry.famedly.net/docker-oss/famedly-sync-agent:latest
+    image: registry.famedly.net/docker-oss/famedly-sync-agent:latest@sha256:e3b4b58b9570d6f0d128c4cb5f6b65d9a9cf6a01bc9228bc9bc6bf2de4086f60
     volumes:
       - type: bind
         source: ./opt
