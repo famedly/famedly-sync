@@ -44,6 +44,7 @@ features = ["rustls-tls-native-roots", "json"]
 vergen = { version = "8.2.6", features = ["git", "gitcl", "build"] } # vergen passes metadata like the version and git commit hash to cargo as a compile-time environment variables
 
 [dev-dependencies]
+dotenv = "0.15.0"
 indoc = "2.0.5"
 ldap3 = { version = "0.11.1", default-features = false, features = ["tls-native"] }
 serde_yaml = "0.9.34"

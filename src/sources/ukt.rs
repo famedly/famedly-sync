@@ -67,7 +67,6 @@ impl UktSource {
 			.get(self.ukt_config.endpoint_url.clone())
 			.query(&[("date", &current_date)])
 			.bearer_auth(oauth2_token.access_token)
-			.header("x-participant-token", oauth2_token.id_token)
 			.send()
 			.await?;
 
@@ -94,8 +93,6 @@ type EmailList = Vec<String>;
 struct OAuth2Token {
 	/// Access token
 	access_token: String,
-	/// ID token
-	id_token: String,
 }
 
 /// Configuration to get a list of users from UKT
@@ -151,7 +148,6 @@ pub mod test_helpers {
 			.respond_with(ResponseTemplate::new(StatusCode::OK).set_body_string(
 				r#"{
               "access_token": "mock_access_token",
-              "id_token": "mock_id_token",
               "token_type": "Bearer",
               "scope": "openid read-maillist",
               "expires_in": 3600
@@ -169,7 +165,6 @@ pub mod test_helpers {
 		Mock::given(method("GET"))
 			.and(path(ENDPOINT_PATH))
 			.and(query_param("date", &current_date))
-			.and(header("x-participant-token", "mock_id_token"))
 			.and(header("Authorization", "Bearer mock_access_token"))
 			.respond_with(ResponseTemplate::new(StatusCode::OK).set_body_string(format!(
 				r#"[
@@ -199,8 +194,8 @@ mod tests {
 
         sources:
           ukt:
-            endpoint_url: https://api.test.ukt.connext.com/usersync4chat/maillist
-            oauth2_url: https://api.test.ukt.connext.com/token
+            endpoint_url: https://api-test.medizin.uni-tuebingen.de/usersync4chat/maillist
+            oauth2_url: https://auth-test.medizin.uni-tuebingen.de/oauth2/token
             client_id: mock_client_id
             client_secret: mock_client_secret
             scope: "openid read-maillist"
@@ -295,10 +290,7 @@ mod tests {
 
 		let ukt = UktSource::new(ukt_config);
 
-		let incorrect_oauth2_token = OAuth2Token {
-			access_token: "wrong_token".to_owned(),
-			id_token: "wrong_id_token".to_owned(),
-		};
+		let incorrect_oauth2_token = OAuth2Token { access_token: "wrong_token".to_owned() };
 
 		let result = ukt.fetch_list(incorrect_oauth2_token).await;
 		assert!(result.is_err(), "Didn't expect to fetch email list: {result:?}");
@@ -307,23 +299,47 @@ mod tests {
 	#[tokio::test]
 	#[ignore]
 	/// Connects to the real URL in config to get the OAuth2 token
+	/// You need to have a `.env` file with UKT_CLIENT_ID and UKT_CLIENT_SECRET
+	/// Run with: cargo test -- --ignored real_test_get_oauth2_token
 	async fn real_test_get_oauth2_token() {
-		let config = load_config();
+		dotenv::dotenv().ok();
+		let client_id =
+			std::env::var("UKT_CLIENT_ID").expect("Set UKT_CLIENT_ID environment variable");
+		let client_secret =
+			std::env::var("UKT_CLIENT_SECRET").expect("Set UKT_CLIENT_SECRET environment variable");
+
+		let mut config = load_config();
+		if let Some(ukt_config) = &mut config.sources.ukt {
+			ukt_config.client_id = client_id;
+			ukt_config.client_secret = client_secret;
+		}
 
 		let ukt_config = config.sources.ukt.expect("UktSource configuration is missing");
 
 		let ukt = UktSource::new(ukt_config);
 
 		let result = ukt.get_oauth2_token().await;
-		// println!("{:?}", result);
+
 		assert!(result.is_ok());
 	}
 
 	#[tokio::test]
 	#[ignore]
 	/// Connects to the real URL in config to get the email list
+	/// You need to have a `.env` file with UKT_CLIENT_ID and UKT_CLIENT_SECRET
+	/// Run with: cargo test -- --ignored real_test_get_oauth2_token
 	async fn real_test_fetch_list() {
-		let config = load_config();
+		dotenv::dotenv().ok();
+		let client_id =
+			std::env::var("UKT_CLIENT_ID").expect("Set UKT_CLIENT_ID environment variable");
+		let client_secret =
+			std::env::var("UKT_CLIENT_SECRET").expect("Set UKT_CLIENT_SECRET environment variable");
+
+		let mut config = load_config();
+		if let Some(ukt_config) = &mut config.sources.ukt {
+			ukt_config.client_id = client_id;
+			ukt_config.client_secret = client_secret;
+		}
 
 		let ukt_config = config.sources.ukt.expect("UktSource configuration is missing");
 
@@ -332,7 +348,7 @@ mod tests {
 		let oauth2_token = ukt.get_oauth2_token().await.expect("Failed to get access token");
 
 		let result = ukt.fetch_list(oauth2_token).await;
-		// println!("{:?}", result);
+
 		assert!(result.is_ok());
 	}
 }
