@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.11.0] - 2025-08-18
+
+### Bug Fixes
+
+- Fix new Clippy warnings
+
+### Features
+
+- Delete only disabled users
+- Adjust for new UKT OAuth2 response
+
+### Miscellaneous Tasks
+
+- Fix new clippy lints
+- Change tracing levels and add info logs
+- Remove Clippy exception
+- Switch from Nexus to Harbor
+
+### Refactor
+
+- Simplify `link_user_ids`
+- [**breaking**] Make LDAP attrs required-to-be-string inconfigurable to be binary
+- Make `preferred_username` optional
+- [**breaking**] Get rid of GRPC v1 client
+- Make IDP value optional
+
+### Testing
+
+- Add tests for duplicate Zitadel users
+- Delete ignored tests hitting real endpoints
+
 ## [0.10.1] - 2025-04-24
 
 ### Bug Fixes
