@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
 
     - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
       with:
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
 
     - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
       with:
@@ -96,7 +96,7 @@ jobs:
         docker compose --project-directory ./tests/environment logs
 
     - name: Codecov - Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@fdcc8476540edceab3de004e990f80d881c6cc00 # v5
       with:
         token: ${{secrets.CODECOV_TOKEN}}
         files: lcov.info
