@@ -26,10 +26,10 @@ jobs:
             runner: arm-ubuntu-latest-8core
             asset_name: ${{ github.event.repository.name }}-linux-aarch64-latest
     runs-on: ${{ matrix.runner }}
-    container: registry.famedly.net/docker-oss/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly@sha256:ae9a782f906641972b0ab95886e30cfa444899c75b5e6368c0f59ffc755f95c8
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
 
       - name: Set up Rust
         uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
@@ -39,13 +39,13 @@ jobs:
           gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
       - name: Caching
-        uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+        uses: Swatinem/rust-cache@cb8ffc21fa260a61d7c314b390985a11fcddf81a
         with:
           cache-on-failure: true
           cache-all-crates: true
 
       - name: Install additional cargo tooling
-        uses: taiki-e/cache-cargo-install-action@3d5e3efe44b020826abe522d18cb4457042280ef
+        uses: taiki-e/cache-cargo-install-action@c3a809e766eccfe7ffbd1c87907d83b26ac07e5b
         with:
           tool: cargo-auditable
 
@@ -58,12 +58,12 @@ jobs:
         run: "mv target/release/${{ github.event.repository.name }} target/release/${{ matrix.asset_name }}"
 
       - name: Attest
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           subject-path: '${{ github.workspace }}/target/release/${{ matrix.asset_name }}'
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.asset_name }}
           path: '${{ github.workspace }}/target/release/${{ matrix.asset_name }}'
@@ -74,10 +74,10 @@ jobs:
       contents: read
       attestations: write
     runs-on: ubuntu-latest
-    container: registry.famedly.net/docker-oss/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly@sha256:ae9a782f906641972b0ab95886e30cfa444899c75b5e6368c0f59ffc755f95c8
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
 
       - name: Set up Rust
         uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
@@ -87,18 +87,18 @@ jobs:
           gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
       - name: Caching
-        uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+        uses: Swatinem/rust-cache@cb8ffc21fa260a61d7c314b390985a11fcddf81a
         with:
           cache-on-failure: true
           cache-all-crates: true
 
       - name: Install cargo-sbom
-        uses: taiki-e/cache-cargo-install-action@3d5e3efe44b020826abe522d18cb4457042280ef
+        uses: taiki-e/cache-cargo-install-action@c3a809e766eccfe7ffbd1c87907d83b26ac07e5b
         with:
           tool: cargo-sbom
 
       - name: Install cyclonedx-rust-cargo
-        uses: taiki-e/cache-cargo-install-action@3d5e3efe44b020826abe522d18cb4457042280ef
+        uses: taiki-e/cache-cargo-install-action@c3a809e766eccfe7ffbd1c87907d83b26ac07e5b
         with:
           tool: cargo-cyclonedx
 
@@ -110,21 +110,21 @@ jobs:
         run: cargo cyclonedx -f json
 
       - name: Attest SPDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.spdx.json'
       - name: Attest CycloneDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.cdx.json'
 
       - name: Upload SPDX SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-sbom-spdx
           path: '${{ github.workspace }}/${{ github.event.repository.name}}.spdx.json'
       - name: Upload CycloneDX SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-sbom-cdx
           path: '${{ github.workspace }}/${{ github.event.repository.name }}.cdx.json'
@@ -134,14 +134,14 @@ jobs:
     needs: [build, sbom]
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
           path: artifacts
           merge-multiple: true
 
       - name: Create release
-        uses: softprops/action-gh-release@79721680dfc87fb0f44dfe65df68961056d55c38
+        uses: softprops/action-gh-release@fbadcc90e88ecface60a0a0d123795b784ceb239
         with:
           files: artifacts/*
           prerelease: "${{ contains(github.ref_name, 'rc') }}"
