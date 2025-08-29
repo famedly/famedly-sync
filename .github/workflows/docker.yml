@@ -11,3 +11,5 @@ jobs:
     secrets: inherit
     with:
       targets: famedly-sync-agent
+      oss: true
+
