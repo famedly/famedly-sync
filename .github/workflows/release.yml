@@ -29,7 +29,7 @@ jobs:
     container: registry.famedly.net/docker-oss/rust-container:nightly
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
 
       - name: Set up Rust
         uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
@@ -58,7 +58,7 @@ jobs:
         run: "mv target/release/${{ github.event.repository.name }} target/release/${{ matrix.asset_name }}"
 
       - name: Attest
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: '${{ github.workspace }}/target/release/${{ matrix.asset_name }}'
 
@@ -77,7 +77,7 @@ jobs:
     container: registry.famedly.net/docker-oss/rust-container:nightly
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
 
       - name: Set up Rust
         uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
@@ -110,11 +110,11 @@ jobs:
         run: cargo cyclonedx -f json
 
       - name: Attest SPDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.spdx.json'
       - name: Attest CycloneDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.cdx.json'
 
@@ -134,7 +134,7 @@ jobs:
     needs: [build, sbom]
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: release-*
           path: artifacts
