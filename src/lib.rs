@@ -7,7 +7,7 @@ use std::{
 use anyhow_ext::{Context, Result, bail};
 use futures::{StreamExt, TryStreamExt};
 use user::User;
-use zitadel::{SkipableZitadelResult, Zitadel};
+use zitadel::{SkippableZitadelResult, Zitadel};
 use zitadel_rust_client::v2::users::{SetHumanProfile, UpdateHumanUserRequest};
 
 mod config;

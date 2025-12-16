@@ -509,7 +509,7 @@ trait GenericCombinatorsExt {
 impl<X> GenericCombinatorsExt for X {}
 
 /// Helper trait for skippable zitadel errors to use with `[SkippedErrors]`
-pub trait SkipableZitadelResult<X: Send> {
+pub trait SkippableZitadelResult<X: Send> {
 	/// Helper method for skippable zitadel errors to use with `[SkippedErrors]`
 	fn skip_zitadel_error(
 		self,
@@ -518,7 +518,7 @@ pub trait SkipableZitadelResult<X: Send> {
 	) -> Option<X>;
 }
 
-impl<X: Send> SkipableZitadelResult<X> for Result<X> {
+impl<X: Send> SkippableZitadelResult<X> for Result<X> {
 	fn skip_zitadel_error(
 		self,
 		operation: &'static str,
