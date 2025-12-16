@@ -1218,7 +1218,6 @@ async fn test_e2e_csv_sync() {
 		.expect("could not query Zitadel users");
 	let user = user.expect("could not find user");
 	assert_eq!(user.user_name, "john.doe@example.com");
-	assert_eq!(user.id, "john.doe", "Unexpected Zitadel userId");
 
 	if let Some(UserType::Human(user)) = user.r#type {
 		let profile = user.profile.expect("user lacks a profile");
@@ -1249,8 +1248,9 @@ async fn test_e2e_csv_sync() {
 	let localpart = zitadel
 		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
 		.await
-		.expect("could not get user metadata");
-	assert_eq!(localpart, Some(user.id.clone()), "Localpart metadata should match userId");
+		.expect("could not get user metadata")
+		.expect("missing localpart");
+	assert_eq!(localpart, "john.doe", "Unexpected Zitadel userId for user without localpart");
 
 	let grants = zitadel
 		.list_user_grants(&config.zitadel.organization_id, &user.id)
@@ -1268,14 +1268,13 @@ async fn test_e2e_csv_sync() {
 
 	let user = user.expect("could not find user");
 	assert_eq!(user.user_name, "jane.smith@example.com");
-	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, "jane.smith@example.com".as_bytes());
-	assert_eq!(user.id, uuid.to_string(), "Unexpected Zitadel userId for user without localpart");
 
+	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, "jane.smith@example.com".as_bytes());
 	let localpart = zitadel
 		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
 		.await
 		.expect("could not get user metadata");
-	assert_eq!(localpart, Some(user.id), "Localpart metadata should match userId");
+	assert_eq!(localpart, Some(uuid.to_string()), "Localpart metadata should match userId");
 
 	// Re-import an existing user to update (as checked by unique email)
 	let csv_content = indoc::indoc! {r#"
@@ -1283,6 +1282,14 @@ async fn test_e2e_csv_sync() {
     john.doe@example.com,Changed_Name,Changed_Surname,+2222222222,new.localpart
   "#};
 	let _file = temp_csv_file(&mut config, csv_content);
+
+	let user_id = zitadel
+		.get_user_by_login_name("john.doe@example.com")
+		.await
+		.expect("could not query Zitadel users")
+		.expect("Must be able to get the user pre-sync")
+		.id;
+
 	perform_sync(config.clone()).await.expect("syncing failed");
 
 	let user = zitadel
@@ -1292,7 +1299,7 @@ async fn test_e2e_csv_sync() {
 
 	let user = user.expect("could not find user");
 	assert_eq!(user.user_name, "john.doe@example.com");
-	assert_eq!(user.id, "john.doe", "Zitadel userId should not change");
+	assert_eq!(user.id, user_id, "Zitadel userId should not change");
 
 	if let Some(UserType::Human(user)) = user.r#type {
 		let profile = user.profile.expect("user lacks a profile");
@@ -1314,7 +1321,7 @@ async fn test_e2e_csv_sync() {
 		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
 		.await
 		.expect("could not get user metadata");
-	assert_eq!(localpart, Some(user.id), "Localpart metadata should match userId");
+	assert_eq!(localpart, Some("john.doe".to_owned()),);
 }
 
 #[test(tokio::test)]

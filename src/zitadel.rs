@@ -213,8 +213,7 @@ impl<'s> Zitadel<'s> {
 		.with_organization(
 			Organization::new().with_org_id(self.zitadel_config.organization_id.clone()),
 		)
-		.with_metadata(metadata)
-		.with_user_id(imported_user.localpart.clone()); // Set the Zitadel userId to the localpart
+		.with_metadata(metadata);
 
 		if let Some(phone) = imported_user.phone.clone() {
 			user.set_phone(
