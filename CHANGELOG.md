@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.11.1] - 2025-12-17
+
+### Continuous Integration Pipeline
+
+- Set oss flag in build workflow
+
+### Features
+
+- Remove the feature setting custom Zitadel IDs
+
+### Miscellaneous Tasks
+
+- Fix typo
+
 ## [0.11.0] - 2025-08-18
 
 ### Bug Fixes
