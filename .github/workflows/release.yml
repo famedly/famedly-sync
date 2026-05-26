@@ -29,10 +29,10 @@ jobs:
     container: registry.famedly.net/docker-oss/rust-container:nightly
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
 
       - name: Set up Rust
-        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
+        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@fcc2ec82a725d5c4c9c6a8f19e8df101c178dcb6
         with:
           gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
           gitlab_user: ${{ secrets.GITLAB_USER }}
@@ -58,12 +58,12 @@ jobs:
         run: "mv target/release/${{ github.event.repository.name }} target/release/${{ matrix.asset_name }}"
 
       - name: Attest
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@10334b5f1e684784025c3fc0a277c88c19089275
         with:
           subject-path: '${{ github.workspace }}/target/release/${{ matrix.asset_name }}'
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-${{ matrix.asset_name }}
           path: '${{ github.workspace }}/target/release/${{ matrix.asset_name }}'
@@ -77,10 +77,10 @@ jobs:
     container: registry.famedly.net/docker-oss/rust-container:nightly
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
 
       - name: Set up Rust
-        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
+        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@fcc2ec82a725d5c4c9c6a8f19e8df101c178dcb6
         with:
           gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
           gitlab_user: ${{ secrets.GITLAB_USER }}
@@ -110,21 +110,21 @@ jobs:
         run: cargo cyclonedx -f json
 
       - name: Attest SPDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@10334b5f1e684784025c3fc0a277c88c19089275
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.spdx.json'
       - name: Attest CycloneDX SBOM
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@10334b5f1e684784025c3fc0a277c88c19089275
         with:
           subject-path: '${{ github.workspace }}/${{ github.event.repository.name }}.cdx.json'
 
       - name: Upload SPDX SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-sbom-spdx
           path: '${{ github.workspace }}/${{ github.event.repository.name}}.spdx.json'
       - name: Upload CycloneDX SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-sbom-cdx
           path: '${{ github.workspace }}/${{ github.event.repository.name }}.cdx.json'
@@ -134,7 +134,7 @@ jobs:
     needs: [build, sbom]
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
           pattern: release-*
           path: artifacts
