@@ -32,7 +32,7 @@ jobs:
         gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
     - name: Caching
-      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+      uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
       with:
         cache-on-failure: true
         cache-all-crates: true
@@ -73,7 +73,7 @@ jobs:
       run: rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
 
     - name: Caching
-      uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+      uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
       with:
         cache-on-failure: true
         cache-all-crates: true
@@ -96,12 +96,12 @@ jobs:
         docker compose --project-directory ./tests/environment logs
 
     - name: Codecov - Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@ca0a928a4cb3911011e868128a5cd90437c12db1
       with:
         token: ${{secrets.CODECOV_TOKEN}}
         files: lcov.info
 
     - name: Codecov - Upload test results
-      uses: codecov/test-results-action@v1
+      uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
       with:
         token: ${{secrets.CODECOV_TOKEN}}

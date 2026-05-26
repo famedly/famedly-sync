@@ -39,13 +39,13 @@ jobs:
           gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
       - name: Caching
-        uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+        uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
         with:
           cache-on-failure: true
           cache-all-crates: true
 
       - name: Install additional cargo tooling
-        uses: taiki-e/cache-cargo-install-action@3d5e3efe44b020826abe522d18cb4457042280ef
+        uses: taiki-e/cache-cargo-install-action@50baf549964a2319a419344c87f6a2141748e7f5
         with:
           tool: cargo-auditable
 
@@ -87,18 +87,18 @@ jobs:
           gitlab_pass: ${{ secrets.GITLAB_PASS }}
 
       - name: Caching
-        uses: Swatinem/rust-cache@68b3cb7503c78e67dae8373749990a220eb65352
+        uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
         with:
           cache-on-failure: true
           cache-all-crates: true
 
       - name: Install cargo-sbom
-        uses: taiki-e/cache-cargo-install-action@3d5e3efe44b020826abe522d18cb4457042280ef
+        uses: taiki-e/cache-cargo-install-action@50baf549964a2319a419344c87f6a2141748e7f5
         with:
           tool: cargo-sbom
 
       - name: Install cyclonedx-rust-cargo
-        uses: taiki-e/cache-cargo-install-action@3d5e3efe44b020826abe522d18cb4457042280ef
+        uses: taiki-e/cache-cargo-install-action@50baf549964a2319a419344c87f6a2141748e7f5
         with:
           tool: cargo-cyclonedx
 
@@ -141,7 +141,7 @@ jobs:
           merge-multiple: true
 
       - name: Create release
-        uses: softprops/action-gh-release@79721680dfc87fb0f44dfe65df68961056d55c38
+        uses: softprops/action-gh-release@403a5240f3837fa857f642062e05aad6bb3391ca
         with:
           files: artifacts/*
           prerelease: "${{ contains(github.ref_name, 'rc') }}"
