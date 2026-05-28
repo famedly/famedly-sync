@@ -26,7 +26,7 @@ jobs:
             runner: arm-ubuntu-latest-8core
             asset_name: ${{ github.event.repository.name }}-linux-aarch64-latest
     runs-on: ${{ matrix.runner }}
-    container: registry.famedly.net/docker-oss/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly@sha256:8edf583411ee94100b14f53f621edd9d6e05c895a3fbaee3046e4f2f70f89195
     steps:
       - name: Checkout code
         uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
@@ -74,7 +74,7 @@ jobs:
       contents: read
       attestations: write
     runs-on: ubuntu-latest
-    container: registry.famedly.net/docker-oss/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly@sha256:8edf583411ee94100b14f53f621edd9d6e05c895a3fbaee3046e4f2f70f89195
     steps:
       - name: Checkout code
         uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
