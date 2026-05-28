@@ -19,13 +19,13 @@ concurrency:
 # Defined CI jobs.
 jobs:
   simple-checks:
-    container: registry.famedly.net/docker-oss/rust-container:nightly
+    container: registry.famedly.net/docker-oss/rust-container:nightly@sha256:8edf583411ee94100b14f53f621edd9d6e05c895a3fbaee3046e4f2f70f89195
     runs-on: ubuntu-latest
     steps:
     - name: Checkout current repository
       uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
 
-    - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
+    - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@40815a109c3c3cd664c1be5baf4cac287043b953 # main
       with:
         gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
         gitlab_user: ${{ secrets.GITLAB_USER }}
@@ -63,7 +63,7 @@ jobs:
     - name: Checkout current repository
       uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
 
-    - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@main
+    - uses: famedly/backend-build-workflows/.github/actions/rust-prepare@40815a109c3c3cd664c1be5baf4cac287043b953 # main
       with:
         gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
         gitlab_user: ${{ secrets.GITLAB_USER }}
