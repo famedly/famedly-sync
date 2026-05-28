@@ -41,7 +41,7 @@ version = "*"
 features = ["rustls-tls-native-roots", "json"]
 
 [build-dependencies]
-vergen = { version = "8.2.6", features = ["git", "gitcl", "build"] } # vergen passes metadata like the version and git commit hash to cargo as a compile-time environment variables
+vergen = { version = "9.0.0", features = ["git", "gitcl", "build"] } # vergen passes metadata like the version and git commit hash to cargo as a compile-time environment variables
 
 [dev-dependencies]
 indoc = "2.0.5"
