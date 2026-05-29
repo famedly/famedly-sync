@@ -39,6 +39,13 @@ sources:
     user_filter: "(memberOf=cn=App)"
     # The LDAP connection timeout
     timeout: 5
+    # Page size for the LDAP Simple Paged Results control (RFC 2696).
+    # famedly-sync always pages large result sets so that directories
+    # with a per-request size cap (Active Directory `MaxPageSize`
+    # default 1000, OpenLDAP `sizelimit` default 500) still return
+    # all matching users instead of aborting with `sizeLimitExceeded`.
+    # Set to 0 to disable paging entirely. Default is 500.
+    # page_size: 500
     # Whether to sync entry deletion.
     check_for_deleted_entries: true
     # Whether to filter for the specific attributes used. Some LDAP

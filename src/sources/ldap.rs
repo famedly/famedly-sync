@@ -4,8 +4,10 @@ use std::{fmt::Display, path::PathBuf, time::Duration};
 
 use anyhow_ext::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
-use itertools::Itertools;
-use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
+use ldap3::{
+	LdapConnAsync, LdapConnSettings, Scope, SearchEntry,
+	adapters::{Adapter, EntriesOnly, PagedResults},
+};
 use native_tls::{Certificate, Identity, TlsConnector};
 use serde::Deserialize;
 use url::Url;
@@ -40,27 +42,34 @@ impl Source for LdapSource {
 			.await?
 			.non_error()?;
 
-		// We *could* use the streaming search instead, as that
-		// *could* let up on memory pressure, however we end up
-		// sorting the list in-memory later anyway.
-		//
-		// TODO: Use streaming search when we have a way to receive
-		// pre-sorted results.
-		let (search_results, _stats) = ldap
-			.search(
+		// Always use a streaming search; when paging is enabled (the
+		// default) we attach a Simple Paged Results control (RFC
+		// 2696) so that result sets larger than the server's
+		// per-request size limit are retrieved across multiple
+		// pages. AD's `MaxPageSize` defaults to 1000 and OpenLDAP's
+		// `sizelimit` to 500, so without paging large directories
+		// abort the sync with `sizeLimitExceeded` (rc=4).
+		let mut adapters: Vec<Box<dyn Adapter<_, _>>> = vec![Box::new(EntriesOnly::new())];
+		if self.ldap_config.page_size > 0 {
+			adapters.push(Box::new(PagedResults::new(self.ldap_config.page_size)));
+		}
+
+		let mut search = ldap
+			.streaming_search_with(
+				adapters,
 				&self.ldap_config.base_dn,
 				Scope::Subtree,
 				&self.ldap_config.user_filter,
 				self.ldap_config.clone().get_attribute_list(),
 			)
-			.await?
-			.non_error()?;
+			.await?;
 
-		let mut users: Vec<User> = search_results
-			.into_iter()
-			.map(SearchEntry::construct)
-			.map(|entry| self.parse_user(entry))
-			.try_collect()?;
+		let mut users: Vec<User> = Vec::new();
+		while let Some(entry) = search.next().await? {
+			let entry = SearchEntry::construct(entry);
+			users.push(self.parse_user(entry)?);
+		}
+		search.finish().await.success()?;
 
 		// Check if there were any connection errors before proceeding
 		// with an expensive sort
@@ -220,6 +229,19 @@ pub struct LdapSourceConfig {
 	pub user_filter: String,
 	/// Timeout for LDAP operations in seconds
 	pub timeout: u64,
+	/// Page size to use for the LDAP Simple Paged Results control
+	/// (RFC 2696). The control is sent on every search, so that
+	/// directories with a server-side per-request size cap (e.g.
+	/// Active Directory's default `MaxPageSize` of 1000, OpenLDAP's
+	/// default `sizelimit` of 500) return their full result set
+	/// across multiple pages instead of aborting with
+	/// `sizeLimitExceeded` (rc=4).
+	///
+	/// Set to 0 to disable paging (not recommended for production).
+	/// The default of 500 sits comfortably below the most common
+	/// server-side caps.
+	#[serde(default = "default_page_size")]
+	pub page_size: i32,
 	/// A mapping from the mostly free-form LDAP attributes to
 	/// attribute names as used by famedly
 	pub attributes: LdapAttributesMapping,
@@ -231,6 +253,13 @@ pub struct LdapSourceConfig {
 	pub use_attribute_filter: bool,
 	/// TLS-related configuration
 	pub tls: Option<LdapTlsConfig>,
+}
+
+/// Default page size for LDAP Simple Paged Results (RFC 2696). Sits
+/// below Active Directory's default `MaxPageSize` of 1000 and matches
+/// OpenLDAP's default `sizelimit` of 500.
+const fn default_page_size() -> i32 {
+	500
 }
 
 #[anyhow_trace::anyhow_trace]
