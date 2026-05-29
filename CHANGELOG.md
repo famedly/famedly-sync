@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.11.2] - 2026-05-29
+
+### Bug Fixes
+
+- Page search results to avoid sizeLimitExceeded
+
+### Miscellaneous Tasks
+
+- Update GitHub Action pins
+- Update GitHub Action pins
+
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+
 ## [0.11.1] - 2025-12-17
 
 ### Continuous Integration Pipeline
