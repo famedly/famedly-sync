@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.2] - 2026-06-02
+
+### Bug Fixes
+
+- *(ldap)* Page search results to avoid sizeLimitExceeded
+
+### Other
+
+- V0.11.2
+
+### Miscellaneous Tasks
+
+- Update GitHub Action pins
+- Update GitHub Action pins
+- Fix failing checks
 
 ## [0.11.1] - 2025-12-17
 
@@ -178,7 +193,6 @@ All notable changes to this project will be documented in this file.
 - Delete unused itertools dependency
 
 ## [0.5.0] - 2024-10-15
-
 
 ### Features
 
