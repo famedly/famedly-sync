@@ -97,6 +97,7 @@ pub enum FeatureFlag {
 	PlainLocalpart,
 }
 
+/// Opt-in feature set
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 pub struct FeatureFlags(Vec<FeatureFlag>);
 
