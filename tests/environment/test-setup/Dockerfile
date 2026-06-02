@@ -1,4 +1,4 @@
-FROM registry.famedly.net/public-ecr-aws/bitnami/openldap:2.6
+FROM bitnamilegacy/openldap:2.6
 
 USER root
 

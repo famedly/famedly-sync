@@ -8,7 +8,7 @@ services:
     entrypoint: /certs/generate-certs.sh
 
   ldap:
-    image: registry.famedly.net/public-ecr-aws/bitnami/openldap:2.6
+    image: bitnamilegacy/openldap:2.6
     ports:
       - 1389:1389
       - 1636:1636

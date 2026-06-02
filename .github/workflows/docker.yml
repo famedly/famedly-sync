@@ -12,4 +12,3 @@ jobs:
     with:
       targets: famedly-sync-agent
       oss: true
-
