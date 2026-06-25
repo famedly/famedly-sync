@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.3] - 2026-06-25
+
+### Bug Fixes
+
+- Remove error message when no users returned from UKT
+
 ## [0.11.2] - 2026-06-02
 
 ### Bug Fixes
