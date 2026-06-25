@@ -49,7 +49,14 @@ pub async fn perform_sync(config: Config) -> Result<SkippedErrors> {
 	// the others
 	if let Some(ukt) = ukt {
 		match ukt.get_removed_user_emails().await {
-			Ok(users) => delete_users_by_email(&zitadel, users).await?,
+			Ok(users) => {
+				if !users.is_empty() {
+					tracing::info!("Got {} users to remove fetched from UKT", users.len());
+					delete_users_by_email(&zitadel, users).await?;
+				} else {
+					tracing::info!("No users to remove fetched from UKT");
+				}
+			}
 			Err(err) => {
 				anyhow::bail!("Failed to query users from ukt: {:?}", err);
 			}
