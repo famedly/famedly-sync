@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
 
       - name: Set up Rust
-        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@fcc2ec82a725d5c4c9c6a8f19e8df101c178dcb6
+        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@40815a109c3c3cd664c1be5baf4cac287043b953
         with:
           gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
           gitlab_user: ${{ secrets.GITLAB_USER }}
@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
 
       - name: Set up Rust
-        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@fcc2ec82a725d5c4c9c6a8f19e8df101c178dcb6
+        uses: famedly/backend-build-workflows/.github/actions/rust-prepare@40815a109c3c3cd664c1be5baf4cac287043b953
         with:
           gitlab_ssh: ${{ secrets.CI_SSH_PRIVATE_KEY}}
           gitlab_user: ${{ secrets.GITLAB_USER }}
