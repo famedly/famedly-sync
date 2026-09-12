@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-09-11
+
+### Bug Fixes
+
+- *(zitadel)* Send explicit first-login invitations to provisioned non-SSO users, restoring onboarding lost with the v2 API migration and Zitadel v2.62.0's mail suppression (FP-295)
+- *(zitadel)* Request email verification explicitly via `sendCode` for `verify_email` and email changes; `isVerified: false` no longer triggers a verification mail
+- *(onboarding)* Retry definite invitation rejections on the next sync, replace invitations after a pre-first-login email change, and require operator reconciliation for ambiguous sends instead of risking duplicates
+- *(ci)* Pin the shared LDAP e2e environment and a dedicated onboarding job to Zitadel 4.15.2 with real SMTP delivery assertions (Mailpit)
+
+### Features
+
+- *(onboarding)* New `invite-user` binary for reviewed, dry-run-by-default backfill of previously affected accounts
+
 ## [0.12.0] - 2026-06-20
 
 ### Bug Fixes

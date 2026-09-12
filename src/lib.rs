@@ -233,6 +233,11 @@ async fn sync_users(
 					);
 
 					delete_zitadel_user(zitadel, skipped_errors, &zitadel_id).await;
+				} else {
+					zitadel
+						.resume_onboarding(&zitadel_id)
+						.await
+						.skip_zitadel_error("resuming onboarding", skipped_errors);
 				}
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();

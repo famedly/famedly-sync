@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16.9-alpine
+    environment:
+      POSTGRES_PASSWORD: disposable-onboarding
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 2s
+      timeout: 5s
+      retries: 45
+  mailpit:
+    image: axllent/mailpit:v1.24.2
+    ports:
+      - "127.0.0.1:${ONBOARDING_MAIL_PORT:?}:8025"
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:v4.15.2
+    user: "0:0"
+    command: start-from-init --masterkey MasterkeyNeedsToHave32Characters --tlsMode disabled --config /fixture/zitadel.json --steps /fixture/steps.json
+    volumes:
+      - "${ONBOARDING_WORK:?}:/fixture"
+    ports:
+      - "127.0.0.1:${ONBOARDING_PORT:?}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started

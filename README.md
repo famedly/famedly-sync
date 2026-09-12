@@ -41,6 +41,58 @@ Config can have **various sources** to sync from. When a source is configured, t
 
 **Feature flags** are optional and can be used to enable or disable certain features.
 
+## Onboarding invitations
+
+New users imported without `sso_login` receive a Zitadel first-login invitation
+once their project's `User` grant exists. This is independent of `verify_email`:
+with the flag, the address remains unverified until invitation verification;
+without it, the imported address is already trusted. The invitation lets users
+set up an authentication method allowed by the organization's login policy.
+Sync does not set passwords. With `sso_login`, sync links the IdP instead of
+sending an invitation; `verify_email` then requests an address-verification mail.
+Subsequent email changes request verification only when `verify_email` is enabled.
+A functioning SMTP provider and permission to manage users, metadata, grants
+and invite codes are required.
+
+### Retries and affected existing users
+
+New non-SSO users carry `famedly-sync.onboarding.<project_id>` metadata:
+`pending` → `sending` → `sent`. Repeated syncs do not re-invite sent users.
+For a managed user without authentication methods, an email change records an
+`email:<base64 destination>` transition before updating the address. A replacement
+invitation is sent only after the destination is read back successfully; failed
+updates cannot send to the old address. Do not manually reset this transition.
+Definite HTTP client-error rejections restore the previous retryable state;
+ambiguous network or server errors stay `sending` and require operator
+reconciliation before retry.
+API success means Zitadel accepted the invitation, not guaranteed inbox delivery.
+
+**Sync and backfill runs for the same organization/project must not overlap.**
+The metadata is not a distributed lock. Use `concurrencyPolicy: Forbid` for a
+Kubernetes CronJob and avoid concurrent operator runs. Creating a replacement
+invitation invalidates the preceding code.
+
+Previously affected, unmarked users are not invited automatically. Review each
+account, then use the separate `invite-user` binary with the normal full sync
+configuration:
+
+```sh
+# Validate only (default dry-run):
+FAMEDLY_SYNC_CONFIG=/path/to/config.yaml cargo run --locked --bin invite-user -- USER_ID
+# Send to the reviewed account:
+FAMEDLY_SYNC_CONFIG=/path/to/config.yaml cargo run --locked --bin invite-user -- USER_ID --send
+```
+
+The account must be human, in the configured organization/project with its `User`
+role and localpart metadata, and have no authentication methods. SSO backfill is
+rejected. A configured `dry_run` remains authoritative even with `--send`.
+For an ambiguous `sending` state, reconcile Zitadel events and delivery first;
+only then intentionally issue a replacement with `--send --retry-uncertain`.
+The utility never resets `sent`; expired invitations require a separately
+reviewed Zitadel resend. Bulk backfill is not implemented. The utility is a
+separate Cargo binary; deployment packaging must include it for use without a
+Rust checkout. Never commit credentials or place them on the command line.
+
 ## Migrations
 
 ### Existing Zitadel deployments
@@ -165,6 +217,52 @@ In addition, a modern docker with the `compose` subcommand is
 required - importantly, this is not true for many distro docker
 packages. Firewalls also need to be configured to allow container <->
 container as well as container <-> host communication.
+
+### Onboarding and email integration tests
+
+The `integration-onboarding` CI job starts an independent disposable Zitadel
+**4.15.2**, PostgreSQL and Mailpit stack on PRs, main pushes and tags. It runs
+real production import/update methods and repeated CSV syncs, checking invitation
+and verification messages, grants, dry-run and explicit legacy backfill. The
+otherwise ignored tests are explicitly selected by the bootstrap; missing
+configuration fails the job. To reproduce locally:
+
+```sh
+# Requires Docker Compose, stable Rust, native OpenSSL development libraries,
+# and Python 3 with cryptography installed (use a virtualenv).
+python3 tests/onboarding/run.py
+```
+
+Each run uses a unique Compose project, dynamically selected loopback ports and
+ephemeral credentials. It leaves sanitized JSON reports in
+`target/onboarding-evidence/` (`ONBOARDING_ARTIFACTS` overrides this directory).
+Cleanup removes its containers and credentials, including on normal failures.
+Forced host/process termination can still require manual cleanup of that project.
+CI artifacts contain no keys, tokens, verification links or mail bodies. Configure
+branch protection to require `integration-onboarding` if it must block merges.
+
+Invitation counts are checked per recipient over a bounded observation window.
+The runner also checks the password-setup form, verifies an invitation code and
+reads back the verified address; it does not submit a password or complete an
+OIDC login. Negative mail assertions are bounded absence evidence, not a claim
+about arbitrarily late messages. Template-subject assertions use the default
+English templates.
+
+For an already prepared *disposable local* instance, the individual email test
+accepts a JSON file containing `ZitadelConfig` (`url`, `key_file`,
+`organization_id`, `project_id`, `idp_id`), rather than a whole sync config:
+
+```sh
+VERIFY_EMAIL_CONFIG=/path/to/disposable-zitadel-config.json \
+VERIFY_EMAIL_MAILPIT=http://localhost:8025 \
+VERIFY_EMAIL_EVIDENCE=/path/to/evidence.json \
+VERIFY_EMAIL_WINDOW_SECONDS=15 \
+cargo test --locked --test verify-email -- --ignored
+```
+
+Imports expect one invitation for both flag settings; email changes expect
+verification mail only with `verify_email`. Only local HTTP endpoints are accepted.
+Do not run the shared LDAP E2E cleanup against this separate environment.
 
 ### E2E test architecture
 

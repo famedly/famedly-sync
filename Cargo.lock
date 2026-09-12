@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "famedly-sync"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "anyhow_ext",
@@ -596,6 +596,7 @@ dependencies = [
  "ldap3",
  "native-tls",
  "reqwest 0.12.28",
+ "reqwest-middleware",
  "serde",
  "serde_json",
  "serde_yaml",

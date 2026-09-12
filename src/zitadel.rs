@@ -1,4 +1,5 @@
 //! Helper functions for submitting data to Zitadel
+mod onboarding;
 use std::{path::PathBuf, pin::pin};
 
 use anyhow_ext::{Context, Result};
@@ -15,9 +16,9 @@ use zitadel_rust_client::v2::{
 	pagination::PaginationParams,
 	users::{
 		AddHumanUserRequest, AndQuery, IdpLink, InUserEmailsQuery, Organization,
-		OrganizationIdQuery, SearchQuery, SetHumanEmail, SetHumanPhone, SetHumanProfile,
-		SetMetadataEntry, TypeQuery, UpdateHumanUserRequest, User as ZitadelUser, UserFieldName,
-		Userv2Type,
+		OrganizationIdQuery, SearchQuery, SendEmailVerificationCode, SetHumanEmail, SetHumanPhone,
+		SetHumanProfile, SetMetadataEntry, TypeQuery, UpdateHumanUserRequest, User as ZitadelUser,
+		UserFieldName, Userv2Type,
 	},
 };
 
@@ -32,6 +33,19 @@ const FAMEDLY_USER_ROLE: &str = "User";
 /// The number of users to sample for encoding detection
 const USER_SAMPLE_SIZE: usize = 50;
 
+/// Build the email verification choice shared by import and email changes.
+fn human_email(email: String, feature_flags: &FeatureFlags) -> SetHumanEmail {
+	let email = SetHumanEmail::new(email);
+	if feature_flags.is_enabled(FeatureFlag::VerifyEmail) {
+		// These are mutually exclusive verification oneof branches. In
+		// particular, isVerified: false does not request a verification email
+		// on import.
+		email.with_send_code(SendEmailVerificationCode::new())
+	} else {
+		email.with_is_verified(true)
+	}
+}
+
 /// A very high-level Zitadel zitadel_client
 #[derive(Clone, Debug)]
 pub struct Zitadel<'s> {
@@ -41,6 +55,8 @@ pub struct Zitadel<'s> {
 	feature_flags: FeatureFlags,
 	/// The backing Zitadel zitadel_client
 	pub zitadel_client: ZitadelClient,
+	/// Lazy first-authentication API extension
+	onboarding_client: onboarding::OnboardingClient,
 	/// Skipped errors tracker
 	skipped_errors: &'s SkippedErrors,
 }
@@ -58,7 +74,13 @@ impl<'s> Zitadel<'s> {
 				.await
 				.context("failed to configure zitadel_client")?;
 
-		Ok(Self { zitadel_config, feature_flags, zitadel_client, skipped_errors })
+		Ok(Self {
+			zitadel_config,
+			feature_flags,
+			zitadel_client,
+			skipped_errors,
+			onboarding_client: onboarding::OnboardingClient::default(),
+		})
 	}
 
 	/// Get a list of users by their email addresses
@@ -133,7 +155,7 @@ impl<'s> Zitadel<'s> {
 					)?
 					.next()
 					.await;
-				Ok(grant.is_some().then_some(user))
+				Ok(grant.transpose()?.is_some().then_some(user))
 			}))
 	}
 
@@ -188,6 +210,17 @@ impl<'s> Zitadel<'s> {
 		self.zitadel_client.delete_user(zitadel_id).await.map(|_o| ())
 	}
 
+	/// Invitation verification verifies the address, so imports need only one
+	/// mail.
+	fn import_email(&self, email: String) -> SetHumanEmail {
+		if self.feature_flags.is_enabled(FeatureFlag::SsoLogin) {
+			human_email(email, &self.feature_flags)
+		} else {
+			SetHumanEmail::new(email)
+				.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyEmail))
+		}
+	}
+
 	/// Import a user into Zitadel
 	pub async fn import_user(&self, imported_user: &User) -> Result<()> {
 		tracing::info!("Importing user with external ID: {}", imported_user.external_user_id);
@@ -206,12 +239,16 @@ impl<'s> Zitadel<'s> {
 			));
 		}
 
+		let invite = !self.feature_flags.is_enabled(FeatureFlag::SsoLogin);
+		if invite {
+			metadata.push(SetMetadataEntry::new(self.onboarding_key(), "pending".to_owned()));
+		}
+		let email = self.import_email(imported_user.email.clone());
 		let mut user = AddHumanUserRequest::new(
 			SetHumanProfile::new(imported_user.first_name.clone(), imported_user.last_name.clone())
 				.with_nick_name(imported_user.external_user_id.clone())
 				.with_display_name(imported_user.get_display_name()),
-			SetHumanEmail::new(imported_user.email.clone())
-				.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyEmail)),
+			email,
 		)
 		.with_organization(
 			Organization::new().with_org_id(self.zitadel_config.organization_id.clone()),
@@ -249,15 +286,8 @@ impl<'s> Zitadel<'s> {
 					)
 				})?;
 
-				self.zitadel_client
-					.add_user_grant(
-						Some(self.zitadel_config.organization_id.clone()),
-						id,
-						self.zitadel_config.project_id.clone(),
-						None,
-						Some(vec![FAMEDLY_USER_ROLE.to_owned()]),
-					)
-					.await?;
+				self.ensure_onboarding_grant(id).await?;
+				self.resume_onboarding(id).await?;
 			}
 
 			Err(error) => {
@@ -270,7 +300,10 @@ impl<'s> Zitadel<'s> {
 				// If the phone number is invalid
 				if error_chain.contains("PHONE-so0wa") {
 					user.reset_phone();
-					self.zitadel_client.create_human_user(user).await?;
+					let created = self.zitadel_client.create_human_user(user).await?;
+					let id = created.user_id().context("Missing created user ID")?;
+					self.ensure_onboarding_grant(id).await?;
+					self.resume_onboarding(id).await?;
 
 				// If the user already exists
 				} else if error_chain.contains("V3-DKcYh") {
@@ -308,6 +341,10 @@ impl<'s> Zitadel<'s> {
 					// Update the existing user with the new external ID and
 					// other changes
 					self.update_user(&existing_zitadel_id, &existing_user, imported_user).await?;
+					// An import interrupted between creation and grant
+					// creation is invisible to the sync (list_users requires
+					// the project grant), so repair and resume it here.
+					self.resume_onboarding(&existing_zitadel_id).await?;
 				} else {
 					anyhow::bail!(error)
 				}
@@ -348,11 +385,9 @@ impl<'s> Zitadel<'s> {
 		let mut request = UpdateHumanUserRequest::new();
 
 		if old_user.email != updated_user.email {
+			self.prepare_onboarding_email(zitadel_id, &updated_user.email).await?;
 			request.set_username(updated_user.email.clone());
-			request.set_email(
-				SetHumanEmail::new(updated_user.email.clone())
-					.with_is_verified(!self.feature_flags.is_enabled(FeatureFlag::VerifyEmail)),
-			);
+			request.set_email(human_email(updated_user.email.clone(), &self.feature_flags));
 		}
 
 		if old_user.first_name != updated_user.first_name
@@ -381,12 +416,14 @@ impl<'s> Zitadel<'s> {
 			}
 		}
 
+		let mut phone_rejected = false;
 		if let Err(error) = self.zitadel_client.update_human_user(zitadel_id, request.clone()).await
 		{
 			// The v2 client surfaces the Zitadel error code as a source in the
 			// error chain, so we match against the whole chain.
 			// If the new phone number is invalid
 			if format!("{error:?}").contains("PHONE-so0wa") {
+				phone_rejected = true;
 				request.reset_phone();
 				self.zitadel_client.update_human_user(zitadel_id, request).await?;
 
@@ -413,6 +450,17 @@ impl<'s> Zitadel<'s> {
 			}
 		}
 
+		// Profile-only migrations must not implicitly send onboarding mail.
+		// Normal unchanged syncs explicitly resume pending work. A rejected
+		// phone or a refused localpart change, however, keeps the user on
+		// this update path on every later sync, so queued retries must also
+		// run here or they never do.
+		if old_user.email != updated_user.email
+			|| phone_rejected
+			|| old_user.localpart != updated_user.localpart
+		{
+			self.resume_onboarding(zitadel_id).await?;
+		}
 		Ok(())
 	}
 
@@ -576,4 +624,34 @@ pub struct ZitadelConfig {
 	pub project_id: String,
 	/// IDP ID provided by Famedly Zitadel (only required when SSO is enabled)
 	pub idp_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn verify_email_requests_code_without_selecting_another_oneof_branch() -> Result<()> {
+		let mut flags = FeatureFlags::default();
+		flags.push(FeatureFlag::VerifyEmail);
+		let email = serde_json::to_value(human_email("verify@example.test".into(), &flags))?;
+		assert_eq!(email["email"], "verify@example.test");
+		assert!(email["sendCode"].is_object(), "verify_email must request code delivery");
+		assert!(email["isVerified"].is_null());
+		assert!(email["returnCode"].is_null());
+		Ok(())
+	}
+
+	#[test]
+	fn verify_email_disabled_marks_verified_without_requesting_code() -> Result<()> {
+		let email = serde_json::to_value(human_email(
+			"verified@example.test".into(),
+			&FeatureFlags::default(),
+		))?;
+		assert_eq!(email["email"], "verified@example.test");
+		assert_eq!(email["isVerified"], true);
+		assert!(email["sendCode"].is_null());
+		assert!(email["returnCode"].is_null());
+		Ok(())
+	}
 }
