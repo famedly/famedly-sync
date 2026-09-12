@@ -128,6 +128,57 @@ async fn disable_users(
 	Ok(())
 }
 
+/// Import a single sync-source user into Zitadel, skipping disabled users.
+///
+/// Errors are recorded in `skipped_errors` rather than aborting the sync.
+async fn import_source_user(
+	zitadel: &Zitadel<'_>,
+	skipped_errors: &SkippedErrors,
+	new_user: &User,
+) {
+	if !new_user.enabled {
+		tracing::debug!(
+			"User with external ID {} would have been imported, but was skipped as they are disabled.",
+			new_user.external_user_id
+		);
+		return;
+	}
+
+	zitadel
+		.import_user(new_user)
+		.await
+		.with_context(|| format!("Failed to import user `{}`", new_user.external_user_id))
+		.skip_zitadel_error("importing user", skipped_errors);
+}
+
+/// Delete a user from Zitadel, recording (but not aborting on) errors.
+async fn delete_zitadel_user(
+	zitadel: &Zitadel<'_>,
+	skipped_errors: &SkippedErrors,
+	zitadel_id: &str,
+) {
+	zitadel
+		.delete_user(zitadel_id)
+		.await
+		.with_context(|| format!("Failed to delete user with Zitadel ID `{zitadel_id}`"))
+		.skip_zitadel_error("deleting user", skipped_errors);
+}
+
+/// Update an existing Zitadel user, recording (but not aborting on) errors.
+async fn update_zitadel_user(
+	zitadel: &Zitadel<'_>,
+	skipped_errors: &SkippedErrors,
+	zitadel_id: &str,
+	existing_user: &User,
+	new_user: &User,
+) {
+	zitadel
+		.update_user(zitadel_id, existing_user, new_user)
+		.await
+		.with_context(|| format!("Failed to update user `{}`", new_user.external_user_id))
+		.skip_zitadel_error("updating user", skipped_errors);
+}
+
 /// Fully sync users
 #[anyhow_trace::anyhow_trace]
 #[tracing::instrument(skip_all)]
@@ -166,21 +217,7 @@ async fn sync_users(
 			// Excess sync source users are not yet in Zitadel,
 			// so we import them
 			(Some(new_user), None) => {
-				if !new_user.enabled {
-					tracing::debug!(
-						"User with external ID {} would have been imported, but was skipped as they are disabled.",
-						new_user.external_user_id
-					);
-				} else {
-					zitadel
-						.import_user(&new_user)
-						.await
-						.with_context(|| {
-							format!("Failed to import user `{}`", new_user.external_user_id)
-						})
-						.skip_zitadel_error("importing user", skipped_errors);
-				}
-
+				import_source_user(zitadel, skipped_errors, &new_user).await;
 				source_user = sync_users.pop_front();
 			}
 
@@ -195,13 +232,7 @@ async fn sync_users(
 						new_user.external_user_id
 					);
 
-					zitadel
-						.delete_user(&zitadel_id)
-						.await
-						.with_context(|| {
-							format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
-						})
-						.skip_zitadel_error("deleting user", skipped_errors);
+					delete_zitadel_user(zitadel, skipped_errors, &zitadel_id).await;
 				}
 				zitadel_user = stream.next().await.transpose()?;
 				source_user = sync_users.pop_front();
@@ -213,21 +244,7 @@ async fn sync_users(
 			(Some(new_user), Some((_, existing_user)))
 				if new_user.external_user_id < existing_user.external_user_id =>
 			{
-				if !new_user.enabled {
-					tracing::debug!(
-						"New sync source user `{}` is disabled, skipping import.",
-						new_user.external_user_id
-					);
-				} else {
-					zitadel
-						.import_user(&new_user)
-						.await
-						.with_context(|| {
-							format!("Failed to import user `{}`", new_user.external_user_id,)
-						})
-						.skip_zitadel_error("importing user", skipped_errors);
-				}
-
+				import_source_user(zitadel, skipped_errors, &new_user).await;
 				source_user = sync_users.pop_front();
 				// Don't fetch the next zitadel user yet
 			}
@@ -260,14 +277,9 @@ async fn sync_users(
 						new_user.external_user_id
 					);
 
-					// If the user is disabled in the source, delete from Zitadel
-					zitadel
-						.delete_user(&zitadel_id)
-						.await
-						.with_context(|| {
-							format!("Failed to delete user with Zitadel ID `{zitadel_id}`",)
-						})
-						.skip_zitadel_error("deleting user", skipped_errors);
+					// If the user is disabled in the source, delete from
+					// Zitadel
+					delete_zitadel_user(zitadel, skipped_errors, &zitadel_id).await;
 				} else {
 					tracing::info!(
 						"User {} with external ID {} will be updated.",
@@ -275,13 +287,14 @@ async fn sync_users(
 						new_user.external_user_id
 					);
 
-					zitadel
-						.update_user(&zitadel_id, &existing_user, &new_user)
-						.await
-						.with_context(|| {
-							format!("Failed to update user `{}`", new_user.external_user_id,)
-						})
-						.skip_zitadel_error("updating user", skipped_errors);
+					update_zitadel_user(
+						zitadel,
+						skipped_errors,
+						&zitadel_id,
+						&existing_user,
+						&new_user,
+					)
+					.await;
 				}
 
 				zitadel_user = stream.next().await.transpose()?;

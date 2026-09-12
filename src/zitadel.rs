@@ -54,7 +54,7 @@ impl<'s> Zitadel<'s> {
 		skipped_errors: &'s SkippedErrors,
 	) -> Result<Self> {
 		let zitadel_client =
-			ZitadelClient::new(zitadel_config.url.clone(), zitadel_config.key_file.clone())
+			ZitadelClient::new(zitadel_config.url.clone(), zitadel_config.key_file.clone(), None)
 				.await
 				.context("failed to configure zitadel_client")?;
 
@@ -70,6 +70,7 @@ impl<'s> Zitadel<'s> {
 		Ok(self
 			.zitadel_client
 			.list_users(
+				None,
 				Some(PaginationParams::DEFAULT.with_asc(true)),
 				Some(UserFieldName::NickName),
 				Some(vec![
@@ -97,6 +98,7 @@ impl<'s> Zitadel<'s> {
 		Ok(self
 			.zitadel_client
 			.list_users(
+				None,
 				Some(PaginationParams::DEFAULT.with_asc(true)),
 				Some(UserFieldName::NickName),
 				Some(vec![SearchQuery::new().with_and_query(AndQuery::new().with_queries(vec![
@@ -157,6 +159,7 @@ impl<'s> Zitadel<'s> {
 	pub async fn get_users_sample(&self) -> Result<Vec<User>> {
 		self.zitadel_client
 			.list_users(
+				None,
 				Some(PaginationParams::DEFAULT.with_asc(true).with_page_size(USER_SAMPLE_SIZE)),
 				Some(UserFieldName::NickName),
 				Some(vec![SearchQuery::new().with_type_query(TypeQuery::new(Userv2Type::Human))]),
@@ -258,18 +261,26 @@ impl<'s> Zitadel<'s> {
 			}
 
 			Err(error) => {
+				// The v2 client wraps the actual Zitadel error (including the
+				// error code we match on below) as a source in the error chain,
+				// so we must inspect the full chain rather than just the
+				// top-level `Display`.
+				let error_chain = format!("{error:?}");
+
 				// If the phone number is invalid
-				if error.to_string().contains("PHONE-so0wa") {
+				if error_chain.contains("PHONE-so0wa") {
 					user.reset_phone();
 					self.zitadel_client.create_human_user(user).await?;
 
 				// If the user already exists
-				} else if error.to_string().contains("V3-DKcYh") {
-					// Handle the case where a user with the same email already exists
-					// This can happen when the external ID changes but the email stays the same
-					// Since we are keeping deleted users in Zitadel for safety reasons unless they
-					// are explicitly disabled in LDAP, we need to update the Zitadel user instead
-					// of how we did it previously (deleting old and creating a new one)
+				} else if error_chain.contains("V3-DKcYh") {
+					// Handle the case where a user with the same email already
+					// exists This can happen when the external ID changes
+					// but the email stays the same Since we are keeping
+					// deleted users in Zitadel for safety reasons unless they
+					// are explicitly disabled in LDAP, we need to update the
+					// Zitadel user instead of how we did it previously
+					// (deleting old and creating a new one)
 					tracing::info!(
 						"User with a different external ID ({}) having the same email already exists in Zitadel, attempting to update",
 						imported_user.external_user_id
@@ -294,7 +305,8 @@ impl<'s> Zitadel<'s> {
 						imported_user.external_user_id
 					);
 
-					// Update the existing user with the new external ID and other changes
+					// Update the existing user with the new external ID and
+					// other changes
 					self.update_user(&existing_zitadel_id, &existing_user, imported_user).await?;
 				} else {
 					anyhow::bail!(error)
@@ -371,14 +383,16 @@ impl<'s> Zitadel<'s> {
 
 		if let Err(error) = self.zitadel_client.update_human_user(zitadel_id, request.clone()).await
 		{
+			// The v2 client surfaces the Zitadel error code as a source in the
+			// error chain, so we match against the whole chain.
 			// If the new phone number is invalid
-			if error.to_string().contains("PHONE-so0wa") {
+			if format!("{error:?}").contains("PHONE-so0wa") {
 				request.reset_phone();
 				self.zitadel_client.update_human_user(zitadel_id, request).await?;
 
 				if let Err(error) = self.zitadel_client.remove_phone(zitadel_id).await {
 					// If the user didn't start out with a phone
-					if !error.to_string().contains("COMMAND-ieJ2e") {
+					if !format!("{error:?}").contains("COMMAND-ieJ2e") {
 						anyhow::bail!(error);
 					}
 				};
@@ -390,10 +404,12 @@ impl<'s> Zitadel<'s> {
 		if old_user.preferred_username != updated_user.preferred_username {
 			if let Some(preferred_username) = &updated_user.preferred_username {
 				self.zitadel_client
-					.set_user_metadata(zitadel_id, "preferred_username", preferred_username)
+					.set_user_metadata(zitadel_id, "preferred_username", preferred_username, None)
 					.await?;
 			} else {
-				self.zitadel_client.delete_user_metadata(zitadel_id, "preferred_username").await?;
+				self.zitadel_client
+					.delete_user_metadata(zitadel_id, "preferred_username", None)
+					.await?;
 			}
 		}
 
@@ -433,7 +449,7 @@ impl<'s> Zitadel<'s> {
 		let phone = human_user.phone().and_then(|human_phone| human_phone.phone()).cloned();
 		let localpart = self
 			.zitadel_client
-			.get_user_metadata(&id, "localpart")
+			.get_user_metadata(&id, "localpart", None)
 			.await
 			.pipe(|x| anyhow::Context::context(x, Skippable))
 			.with_context(|| format!("Fetching localpart metadata for {external_id:?} ({id})"))?
@@ -444,7 +460,7 @@ impl<'s> Zitadel<'s> {
 
 		let preferred_username = self
 			.zitadel_client
-			.get_user_metadata(&id, "preferred_username")
+			.get_user_metadata(&id, "preferred_username", None)
 			.await
 			.ok()
 			.and_then(|res| res.metadata().value());

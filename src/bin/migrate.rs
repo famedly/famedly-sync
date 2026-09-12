@@ -236,24 +236,26 @@ mod tests {
 	#[tokio::test]
 	async fn test_edge_length_cases() {
 		// "cafe" is ambiguous (valid hex and base64)
-		// "cafeb" length is 5, not divisible by 2 or 4, so neither hex nor base64
-		// "abc" length is 3, not divisible by 4, and 'c' is hex valid but odd length ->
-		// not hex.
+		// "cafeb" length is 5, not divisible by 2 or 4, so neither hex nor
+		// base64 "abc" length is 3, not divisible by 4, and 'c' is hex valid
+		// but odd length -> not hex.
 		let user_ids = vec![
 			UserId::Hex("cafe".to_owned()),
 			UserId::Plain("cafeb".to_owned()),
 			UserId::Plain("abc".to_owned()),
 		];
-		// "cafe" might count for both hex and base64, but "cafeb" and "abc" won't count
-		// for either. Out of 3, maybe 1 counts as hex/base64 and 2 are plain. Ratios:
-		// hex = 1/3 ≈ 0.33, base64 = 1/3 ≈ 0.33, both < 0.8.
+		// "cafe" might count for both hex and base64, but "cafeb" and "abc"
+		// won't count for either. Out of 3, maybe 1 counts as hex/base64 and
+		// 2 are plain. Ratios: hex = 1/3 ≈ 0.33, base64 = 1/3 ≈ 0.33, both <
+		// 0.8.
 		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
 
 	#[tokio::test]
 	async fn test_invalid_characters() {
-		// "zzz" is not hex. It's also not base64-safe (though 'z' is alphanumeric,
-		// length=3 %4!=0) "+++" is not hex and length=3 not multiple of 4 for base64.
+		// "zzz" is not hex. It's also not base64-safe (though 'z' is
+		// alphanumeric, length=3 %4!=0) "+++" is not hex and length=3 not
+		// multiple of 4 for base64.
 		let user_ids = vec![UserId::Plain("zzz".to_owned()), UserId::Plain("+++".to_owned())];
 		run_detection_test(user_ids, ExternalIdEncoding::Ambiguous);
 	}
@@ -355,8 +357,9 @@ mod tests {
 	async fn test_conversion_base64_to_hex() {
 		let original_id = UserId::Base64("Y2FmZQ==".to_owned()); // "cafe"
 
-		// Expected base64, we decode base64 => "cafe" and then hex encode the bytes of
-		// "cafe". "cafe" as ASCII: 0x63 0x61 0x66 0x65 in hex is "63616665"
+		// Expected base64, we decode base64 => "cafe" and then hex encode the
+		// bytes of "cafe". "cafe" as ASCII: 0x63 0x61 0x66 0x65 in hex is
+		// "63616665"
 		run_conversion_test(original_id, ExternalIdEncoding::Base64, "63616665");
 	}
 

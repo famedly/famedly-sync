@@ -35,7 +35,14 @@ impl Source for LdapSource {
 		)
 		.await?;
 
-		let connection_result = ldap3::drive!(conn);
+		// Equivalent to the `ldap3::drive!` macro, inlined because the macro
+		// ends with a semicolon and cannot be used in expression position
+		// (rejected by newer nightlies, see rust-lang/rust#79813).
+		let connection_result = tokio::spawn(async move {
+			if let Err(e) = conn.drive().await {
+				tracing::warn!("LDAP connection error: {e}");
+			}
+		});
 
 		ldap.with_timeout(Duration::from_secs(self.ldap_config.timeout))
 			.simple_bind(&self.ldap_config.bind_dn, &self.ldap_config.bind_password)
@@ -85,7 +92,8 @@ impl Source for LdapSource {
 		// algorithm, we shouldn't try to rely on this without a good
 		// amount of testing.
 		//
-		// TODO: Find out if we can use the AD extension for receiving sorted data
+		// TODO: Find out if we can use the AD extension for receiving sorted
+		// data
 		users.sort_by(|a, b| a.external_user_id.cmp(&b.external_user_id));
 
 		Ok(users)
