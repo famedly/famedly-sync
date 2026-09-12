@@ -1938,3 +1938,42 @@ fn run_migration_binary(is_dry_run: bool) {
 		.expect("Failed to execute migration binary");
 	assert!(status.success(), "Migration binary exited with status: {status}");
 }
+
+/// Paging and attribute filtering must preserve every reconciled user.
+#[test(tokio::test)]
+async fn test_e2e_ldap_paging_and_attribute_filter_equivalence() {
+	let mut ldap = Ldap::new().await;
+	for n in 0..5 {
+		ldap.create_user(
+			"Paging",
+			"Fixture",
+			"Paging Fixture",
+			&format!("paging-{n}@example.test"),
+			None,
+			&format!("paging-{n}"),
+			false,
+		)
+		.await;
+	}
+	let mut config = ldap_config().await.clone();
+	for (page_size, use_attribute_filter) in [(2, true), (0, false)] {
+		let source = config.sources.ldap.as_mut().expect("LDAP config");
+		source.page_size = page_size;
+		source.use_attribute_filter = use_attribute_filter;
+		perform_sync(config.clone())
+			.await
+			.expect("sync")
+			.assert_no_errors()
+			.expect("no skipped errors");
+		let zitadel = open_zitadel_connection().await;
+		for n in 0..5 {
+			assert!(
+				zitadel
+					.get_user_by_login_name(&format!("paging-{n}@example.test"))
+					.await
+					.expect("lookup")
+					.is_some()
+			);
+		}
+	}
+}

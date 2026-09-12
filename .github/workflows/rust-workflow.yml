@@ -18,6 +18,37 @@ concurrency:
 
 # Defined CI jobs.
 jobs:
+  integration-onboarding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout current repository
+      uses: actions/checkout@900f2210b1d28bbbd0bd22d17926b9e224e8f231
+    - name: Install stable Rust and native dependencies
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev pkg-config python3-venv
+        python3 -m venv "$RUNNER_TEMP/onboarding-venv"
+        "$RUNNER_TEMP/onboarding-venv/bin/pip" install cryptography==46.0.6
+    - name: Caching
+      uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+    - name: Bootstrap pinned Zitadel and assert onboarding mail
+      env:
+        ONBOARDING_ARTIFACTS: target/onboarding-evidence
+      run: '"$RUNNER_TEMP/onboarding-venv/bin/python" tests/onboarding/run.py'
+    - name: Upload safe evidence (never keys or mail bodies)
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: onboarding-evidence
+        path: target/onboarding-evidence/*.json
+        if-no-files-found: error
+        retention-days: 7
+
   simple-checks:
     container: registry.famedly.net/docker-oss/rust-container:nightly
     runs-on: ubuntu-latest

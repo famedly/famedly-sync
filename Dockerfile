@@ -28,5 +28,6 @@ WORKDIR /opt/famedly-sync
 COPY --from=builder /app/target/release/famedly-sync /usr/local/bin/famedly-sync
 COPY --from=builder /app/target/release/migrate /usr/local/bin/migrate
 COPY --from=builder /app/target/release/install-ids /usr/local/bin/install-ids
+COPY --from=builder /app/target/release/invite-user /usr/local/bin/invite-user
 ENV FAMEDLY_SYNC_CONFIG="/opt/famedly-sync/config.yaml"
 CMD ["/usr/local/bin/famedly-sync"]
