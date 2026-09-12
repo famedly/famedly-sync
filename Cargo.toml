@@ -1,6 +1,6 @@
 [package]
 name = "famedly-sync"
-version = "0.11.3"
+version = "0.12.0"
 authors = []
 edition = "2024"
 publish = false
@@ -33,7 +33,7 @@ tracing-subscriber = "0.3.18"
 url = "2.5.2"
 uuid = { version = "1.10.0", features = ["v5"] }
 wiremock = "0.6.2"
-zitadel-rust-client = { git = "https://github.com/famedly/zitadel-rust-client", version = "0.3.0", default-features = false }
+zitadel-rust-client = { package = "famedly-zitadel-rust-client", version = "0.12", default-features = false }
 
 [dependencies.reqwest]
 version = "*"
@@ -49,7 +49,6 @@ ldap3 = { version = "0.11.1", default-features = false, features = ["tls-native"
 serde_yaml = "0.9.34"
 tempfile = "3.10.1"
 test-log = { version = "0.2.16", features = ["trace", "unstable"] }
-zitadel-rust-client = { git = "https://github.com/famedly/zitadel-rust-client", version = "0.3.0", features = ["v1"] }
 
 [lints.rust]
 dead_code = "warn"

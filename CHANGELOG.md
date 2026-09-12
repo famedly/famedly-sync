@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-06-20
+
+### Bug Fixes
+
+- *(zitadel)* Match Zitadel error codes across the full v2 error chain, restoring the "user already exists" update path and the invalid-phone fallback
+
+### Refactor
+
+- *(tests)* Migrate the e2e suite from the gRPC v1 client to the v2 HTTP API
+
+### Miscellaneous Tasks
+
+- *(deps)* Migrate to famedly-zitadel-rust-client v0.12
+
 ## [0.11.3] - 2026-06-25
 
 ### Bug Fixes

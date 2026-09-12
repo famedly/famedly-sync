@@ -3,12 +3,22 @@
 #![cfg(test)]
 #![allow(clippy::expect_used, dead_code)]
 
-use std::{collections::HashSet, path::Path, time::Duration};
+use std::{collections::HashSet, path::Path, pin::pin, time::Duration};
 
+use anyhow::{Context as _, Result};
 use famedly_sync::{Config, SkippedErrors, zitadel::Zitadel as SyncZitadel};
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use ldap3::{Ldap as LdapClient, LdapConnAsync, LdapConnSettings, Mod};
 use tokio::sync::OnceCell;
+use zitadel_rust_client::v2::{
+	Zitadel,
+	management::{V1UserGrantProjectIdQuery, V1UserGrantQuery, V1UserGrantUserIdQuery},
+	pagination::PaginationParams,
+	users::{
+		AddHumanUserRequest, IdpLink, LoginNameQuery, Organization, SearchQuery, SetHumanEmail,
+		SetHumanPhone, SetHumanProfile, User,
+	},
+};
 
 /// Ldap client with helper functions to create tests users
 pub struct Ldap {
@@ -213,4 +223,126 @@ pub async fn cleanup_test_users(config: &Config) {
 		})
 		.await
 		.unwrap();
+}
+
+/// Test-only ergonomic helpers on top of the raw Zitadel v2 client.
+///
+/// These exist so the e2e tests can read and seed Zitadel state through the
+/// same v2 HTTP API that production uses, instead of the legacy v1/gRPC client.
+#[allow(async_fn_in_trait)]
+pub trait ZitadelExt {
+	/// Look up a single user by one of their login names.
+	///
+	/// Returns `Ok(None)` when no such user exists (the v2 API simply yields an
+	/// empty result set, unlike the v1 client which raised a `NotFound` error).
+	async fn get_user_by_login_name(&self, login_name: &str) -> Result<Option<User>>;
+
+	/// Fetch and decode a single metadata value for a user, if present.
+	async fn get_metadata(&self, org_id: &str, user_id: &str, key: &str) -> Result<Option<String>>;
+
+	/// Collect all role keys granted to a user on the given project.
+	async fn user_role_keys(
+		&self,
+		org_id: &str,
+		project_id: &str,
+		user_id: &str,
+	) -> Result<Vec<String>>;
+
+	/// Collect all identity provider links of a user.
+	async fn user_idp_links(&self, user_id: &str) -> Result<Vec<IdpLink>>;
+
+	/// Create a verified human user directly in Zitadel and return its ID.
+	///
+	/// Intended for seeding test fixtures that bypass the sync logic.
+	#[allow(clippy::too_many_arguments)]
+	async fn create_test_human_user(
+		&self,
+		org_id: &str,
+		username: &str,
+		first_name: &str,
+		last_name: &str,
+		display_name: &str,
+		nick_name: &str,
+		email: &str,
+		phone: &str,
+	) -> Result<String>;
+}
+
+impl ZitadelExt for Zitadel {
+	async fn get_user_by_login_name(&self, login_name: &str) -> Result<Option<User>> {
+		let mut stream = pin!(self.list_users(
+			None,
+			Some(PaginationParams::DEFAULT.with_asc(true)),
+			None,
+			Some(vec![
+				SearchQuery::new()
+					.with_login_name_query(LoginNameQuery::new(login_name.to_owned())),
+			]),
+		)?);
+
+		stream.next().await.transpose()
+	}
+
+	async fn get_metadata(&self, org_id: &str, user_id: &str, key: &str) -> Result<Option<String>> {
+		Ok(self.get_user_metadata(user_id, key, Some(org_id.to_owned())).await?.metadata().value())
+	}
+
+	async fn user_role_keys(
+		&self,
+		org_id: &str,
+		project_id: &str,
+		user_id: &str,
+	) -> Result<Vec<String>> {
+		let grants: Vec<_> = self
+			.search_user_grants(
+				Some(org_id.to_owned()),
+				None,
+				Some(vec![
+					V1UserGrantQuery::ProjectId {
+						project_id_query: V1UserGrantProjectIdQuery::new()
+							.with_project_id(project_id.to_owned()),
+					},
+					V1UserGrantQuery::UserId {
+						user_id_query: V1UserGrantUserIdQuery::new()
+							.with_user_id(user_id.to_owned()),
+					},
+				]),
+			)?
+			.try_collect()
+			.await?;
+
+		Ok(grants.into_iter().filter_map(|grant| grant.role_keys().cloned()).flatten().collect())
+	}
+
+	async fn user_idp_links(&self, user_id: &str) -> Result<Vec<IdpLink>> {
+		self.list_idp_links(user_id, None, None)?.try_collect().await
+	}
+
+	async fn create_test_human_user(
+		&self,
+		org_id: &str,
+		username: &str,
+		first_name: &str,
+		last_name: &str,
+		display_name: &str,
+		nick_name: &str,
+		email: &str,
+		phone: &str,
+	) -> Result<String> {
+		let request = AddHumanUserRequest::new(
+			SetHumanProfile::new(first_name.to_owned(), last_name.to_owned())
+				.with_display_name(display_name.to_owned())
+				.with_nick_name(nick_name.to_owned()),
+			SetHumanEmail::new(email.to_owned()).with_is_verified(true),
+		)
+		.with_username(username.to_owned())
+		.with_organization(Organization::new().with_org_id(org_id.to_owned()))
+		.with_phone(SetHumanPhone::new().with_phone(phone.to_owned()).with_is_verified(true));
+
+		self.create_human_user(request)
+			.await?
+			.user_id()
+			.context("created user is missing an ID")
+			.cloned()
+	}
 }

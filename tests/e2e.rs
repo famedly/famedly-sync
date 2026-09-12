@@ -17,14 +17,11 @@ use test_log::test;
 use url::Url;
 use uuid::{Uuid, uuid};
 use wiremock::MockServer;
-use zitadel_rust_client::v1::{
-	Email, Gender, ImportHumanUserRequest, Phone, Profile, UserType, Zitadel,
-	error::{Error as ZitadelError, TonicErrorCode},
-};
+use zitadel_rust_client::v2::Zitadel;
 
 mod common;
 
-use common::{Ldap, cleanup_test_users, csv_config, ldap_config, ukt_config};
+use common::{Ldap, ZitadelExt, cleanup_test_users, csv_config, ldap_config, ukt_config};
 
 /// The Famedly UUID namespace to use to generate v5 UUIDs.
 const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
@@ -32,93 +29,94 @@ const FAMEDLY_NAMESPACE: Uuid = uuid!("d9979cff-abee-4666-bc88-1ec45a843fb8");
 /// The Zitadel project role to assign to users.
 const FAMEDLY_USER_ROLE: &str = "User";
 
+/// Sync a single user with the given `uid`/`email` and assert that their
+/// Zitadel nickname is the hex-encoded `uid`.
+async fn verify_user_encoding(
+	ldap: &mut Ldap,
+	zitadel: &Zitadel,
+	config: &Config,
+	uid: &str,
+	email: &str,
+) -> Result<(), String> {
+	let login_name = email;
+	let expected_hex_id = hex::encode(uid.as_bytes());
+
+	ldap.create_user("Test", "User", "TU", login_name, None, uid, false).await;
+
+	perform_sync(config.clone()).await.map_err(|e| format!("Sync failed: {e}"))?;
+
+	let user = zitadel
+		.get_user_by_login_name(login_name)
+		.await
+		.map_err(|e| format!("Failed to get user: {e}"))?
+		.ok_or_else(|| "User not found".to_owned())?;
+
+	let human = user.human().ok_or_else(|| "User lacks human details".to_owned())?;
+	let profile = human.profile().ok_or_else(|| "User lacks profile".to_owned())?;
+	let nick_name = profile.nick_name().map_or("", String::as_str);
+
+	if nick_name != expected_hex_id {
+		return Err(format!(
+			"ID mismatch for '{uid}': expected '{expected_hex_id}', got '{nick_name}'"
+		));
+	}
+	Ok(())
+}
+
+/// Test cases for verifying correct user ID encoding (uid, email).
+const USER_ID_ENCODING_CASES: &[(&str, &str)] = &[
+	// Basic cases
+	("simple123", "simple123@example.com"),
+	("MiXed123Case", "mixed123case@example.com"),
+	// Special characters
+	("u.s-e_r", "user@example.com"),
+	("123", "123@example.com"),
+	// Unicode
+	("üsernamÉ", "username@example.com"),
+	("ὈΔΥΣΣΕΎΣ", "odysseus@example.com"),
+	("Потребител", "potrebitel@example.com"),
+	// Long string
+	("ThisIsAVeryLongUsernameThatShouldStillWork123456789", "long@example.com"),
+];
+
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_user_id_encoding() {
-	async fn verify_user_encoding(
-		ldap: &mut Ldap,
-		zitadel: &Zitadel,
-		config: &Config,
-		uid: &str,
-		email: &str,
-	) -> Result<(), String> {
-		let login_name = email;
-		let expected_hex_id = hex::encode(uid.as_bytes());
-
-		ldap.create_user("Test", "User", "TU", login_name, None, uid, false).await;
-
-		perform_sync(config.clone()).await.map_err(|e| format!("Sync failed: {e}"))?;
-
-		let user = zitadel
-			.get_user_by_login_name(login_name)
-			.await
-			.map_err(|e| format!("Failed to get user: {e}"))?
-			.ok_or_else(|| "User not found".to_owned())?;
-
-		match user.r#type {
-			Some(UserType::Human(user)) => {
-				let profile = user.profile.ok_or_else(|| "User lacks profile".to_owned())?;
-
-				if profile.nick_name != expected_hex_id {
-					return Err(format!(
-						"ID mismatch for '{}': expected '{}', got '{}'",
-						uid, expected_hex_id, profile.nick_name
-					));
-				}
-				Ok(())
-			}
-			_ => Err("User lacks human details".to_owned()),
-		}
-	}
-
-	/// Test cases for verifying correct user ID encoding
-	/// (uid, email)
-	const TEST_CASES: &[(&str, &str)] = &[
-		// Basic cases
-		("simple123", "simple123@example.com"),
-		("MiXed123Case", "mixed123case@example.com"),
-		// Special characters
-		("u.s-e_r", "user@example.com"),
-		("123", "123@example.com"),
-		// Unicode
-		("üsernamÉ", "username@example.com"),
-		("ὈΔΥΣΣΕΎΣ", "odysseus@example.com"),
-		("Потребител", "potrebitel@example.com"),
-		// Long string
-		("ThisIsAVeryLongUsernameThatShouldStillWork123456789", "long@example.com"),
-	];
-
-	// Run all test cases
 	let config = ldap_config().await;
 	let mut ldap = Ldap::new().await;
 	let zitadel = open_zitadel_connection().await;
 
-	for (uid, email) in TEST_CASES {
+	for (uid, email) in USER_ID_ENCODING_CASES {
 		if let Err(error) = verify_user_encoding(&mut ldap, &zitadel, config, uid, email).await {
 			panic!("Test failed for ID '{uid}': {error}");
 		}
 	}
 }
 
+/// A user fixture for the ID sync-ordering test.
+struct TestUser<'a> {
+	/// Raw LDAP uid, used as the external ID.
+	uid: &'a str,
+	/// Email address / login name.
+	email: &'a str,
+	/// Phone number.
+	phone: &'a str,
+}
+
+/// Users covering a range of scripts to exercise sync ordering by external ID.
+const TEST_USERS: &[TestUser] = &[
+	TestUser { uid: "üser", email: "youser@example.com", phone: "+6666666666" },
+	TestUser { uid: "aaa", email: "aaa@example.com", phone: "+1111111111" },
+	TestUser { uid: "777", email: "777@example.com", phone: "+5555555555" },
+	TestUser { uid: "bbb", email: "bbb@example.com", phone: "+3333333333" },
+	TestUser { uid: "🦀", email: "crab@example.com", phone: "+1000000001" },
+	TestUser { uid: "한글", email: "korean@example.com", phone: "+1000000002" },
+	TestUser { uid: "عربي", email: "arabic@example.com", phone: "+1000000005" },
+];
+
 #[test(tokio::test)]
 #[test_log(default_log_filter = "debug")]
 async fn test_e2e_user_id_sync_ordering() {
-	struct TestUser<'a> {
-		uid: &'a str,
-		email: &'a str,
-		phone: &'a str,
-	}
-
-	const TEST_USERS: &[TestUser] = &[
-		TestUser { uid: "üser", email: "youser@example.com", phone: "+6666666666" },
-		TestUser { uid: "aaa", email: "aaa@example.com", phone: "+1111111111" },
-		TestUser { uid: "777", email: "777@example.com", phone: "+5555555555" },
-		TestUser { uid: "bbb", email: "bbb@example.com", phone: "+3333333333" },
-		TestUser { uid: "🦀", email: "crab@example.com", phone: "+1000000001" },
-		TestUser { uid: "한글", email: "korean@example.com", phone: "+1000000002" },
-		TestUser { uid: "عربي", email: "arabic@example.com", phone: "+1000000005" },
-	];
-
 	// Setup
 	let config = ldap_config().await;
 	let mut ldap = Ldap::new().await;
@@ -142,27 +140,28 @@ async fn test_e2e_user_id_sync_ordering() {
 			.unwrap_or_else(|_| panic!("Failed to get user {}", user.email))
 			.unwrap_or_else(|| panic!("User {} not found", user.email));
 
-		match zitadel_user.r#type {
-			Some(UserType::Human(human)) => {
-				// Verify ID encoding
-				let profile =
-					human.profile.unwrap_or_else(|| panic!("User {} lacks profile", user.email));
-				assert_eq!(
-					profile.nick_name,
-					expected_hex_id,
-					"Wrong ID encoding for user {}, got '{:?}', expected '{:?}'",
-					user.email,
-					String::from_utf8_lossy(&hex::decode(profile.nick_name.clone()).unwrap()),
-					String::from_utf8_lossy(&hex::decode(expected_hex_id.clone()).unwrap())
-				);
+		let human = zitadel_user
+			.human()
+			.unwrap_or_else(|| panic!("User {} lacks human details", user.email));
+		// Verify ID encoding
+		let profile =
+			human.profile().unwrap_or_else(|| panic!("User {} lacks profile", user.email));
+		let nick_name = profile.nick_name().map_or("", String::as_str);
+		assert_eq!(
+			nick_name,
+			expected_hex_id,
+			"Wrong ID encoding for user {}, got '{:?}', expected '{:?}'",
+			user.email,
+			String::from_utf8_lossy(&hex::decode(nick_name).unwrap()),
+			String::from_utf8_lossy(&hex::decode(expected_hex_id.clone()).unwrap())
+		);
 
-				// Verify phone number to ensure complete sync
-				let phone =
-					human.phone.unwrap_or_else(|| panic!("User {} lacks phone", user.email));
-				assert_eq!(phone.phone, user.phone, "Wrong phone for user {}", user.email);
-			}
-			_ => panic!("User {} lacks human details", user.email),
-		}
+		// Verify phone number to ensure complete sync
+		let phone = human
+			.phone()
+			.and_then(|phone| phone.phone())
+			.map_or_else(|| panic!("User {} lacks phone", user.email), String::as_str);
+		assert_eq!(phone, user.phone, "Wrong phone for user {}", user.email);
 	}
 
 	// Now update all users with new data
@@ -186,21 +185,18 @@ async fn test_e2e_user_id_sync_ordering() {
 			.unwrap_or_else(|_| panic!("Failed to get updated user {}", user.email))
 			.unwrap_or_else(|| panic!("Updated user {} not found", user.email));
 
-		match zitadel_user.r#type {
-			Some(UserType::Human(human)) => {
-				let profile = human
-					.profile
-					.unwrap_or_else(|| panic!("Updated user {} lacks profile", user.email));
-				let last_name = profile.last_name;
-				assert_eq!(
-					last_name,
-					format!("SN{}", user.uid),
-					"Wrong updated last_name for user {}",
-					user.email
-				);
-			}
-			_ => panic!("Updated user {} lacks human details", user.email),
-		}
+		let human = zitadel_user
+			.human()
+			.unwrap_or_else(|| panic!("Updated user {} lacks human details", user.email));
+		let profile =
+			human.profile().unwrap_or_else(|| panic!("Updated user {} lacks profile", user.email));
+		let last_name = profile.family_name().cloned().unwrap_or_default();
+		assert_eq!(
+			last_name,
+			format!("SN{}", user.uid),
+			"Wrong updated last_name for user {}",
+			user.email
+		);
 	}
 
 	// Delete users
@@ -233,17 +229,12 @@ async fn test_e2e_user_id_sync_ordering() {
 
 	// Verify all users were deleted in correct order
 	for user in TEST_USERS {
-		let result = zitadel.get_user_by_login_name(user.email).await;
+		let result = zitadel
+			.get_user_by_login_name(user.email)
+			.await
+			.expect("failed to query Zitadel users");
 
-		assert!(
-			matches!(
-				result,
-				Err(ZitadelError::TonicResponseError(status))
-				if status.code() == TonicErrorCode::NotFound
-			),
-			"User {} still exists after deletion",
-			user.email
-		);
+		assert!(result.is_none(), "User {} still exists after deletion", user.email);
 	}
 }
 
@@ -275,30 +266,25 @@ async fn test_e2e_simple_sync() {
 
 	let user = user.expect("could not find user");
 
-	assert_eq!(user.user_name, "simple@famedly.de");
+	assert_eq!(user.username().map(String::as_str), Some("simple@famedly.de"));
 
-	if let Some(UserType::Human(user)) = user.r#type {
-		let profile = user.profile.expect("user lacks a profile");
-		let phone = user.phone.expect("user lacks a phone number)");
-		let email = user.email.expect("user lacks an email address");
+	let human = user.human().expect("user lacks details");
+	let profile = human.profile().expect("user lacks a profile");
+	let phone = human.phone().expect("user lacks a phone number");
+	let email = human.email().expect("user lacks an email address");
 
-		assert_eq!(profile.first_name, "Bob");
-		assert_eq!(profile.last_name, "Tables");
-		assert_eq!(profile.display_name, "Tables, Bob");
-		assert_eq!(phone.phone, "+12015550123");
-		assert!(phone.is_phone_verified);
-		assert_eq!(email.email, "simple@famedly.de");
-		assert!(email.is_email_verified);
-	} else {
-		panic!("user lacks details");
-	}
+	assert_eq!(profile.given_name().map(String::as_str), Some("Bob"));
+	assert_eq!(profile.family_name().map(String::as_str), Some("Tables"));
+	assert_eq!(profile.display_name().map(String::as_str), Some("Tables, Bob"));
+	assert_eq!(phone.phone().map(String::as_str), Some("+12015550123"));
+	assert_eq!(phone.is_verified(), Some(&true));
+	assert_eq!(email.email().map(String::as_str), Some("simple@famedly.de"));
+	assert_eq!(email.is_verified(), Some(&true));
+
+	let user_id = user.user_id().expect("user lacks an ID").clone();
 
 	let preferred_username = zitadel
-		.get_user_metadata(
-			Some(config.zitadel.organization_id.clone()),
-			&user.id,
-			"preferred_username",
-		)
+		.get_metadata(&config.zitadel.organization_id, &user_id, "preferred_username")
 		.await
 		.expect("could not get user metadata");
 	assert_eq!(preferred_username, Some("Bobby".to_owned()));
@@ -306,18 +292,16 @@ async fn test_e2e_simple_sync() {
 	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, "simple".as_bytes());
 
 	let localpart = zitadel
-		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
+		.get_metadata(&config.zitadel.organization_id, &user_id, "localpart")
 		.await
 		.expect("could not get user metadata");
 	assert_eq!(localpart, Some(uuid.to_string()));
 
-	let grants = zitadel
-		.list_user_grants(&config.zitadel.organization_id, &user.id)
+	let role_keys = zitadel
+		.user_role_keys(&config.zitadel.organization_id, &config.zitadel.project_id, &user_id)
 		.await
 		.expect("failed to get user grants");
-
-	let grant = grants.result.first().expect("no user grants found");
-	assert!(grant.role_keys.clone().into_iter().any(|key| key == FAMEDLY_USER_ROLE));
+	assert!(role_keys.iter().any(|key| key == FAMEDLY_USER_ROLE));
 }
 
 #[test(tokio::test)]
@@ -339,22 +323,12 @@ async fn test_e2e_sync_disabled_user() {
 	perform_sync(config.clone()).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
-	let user = zitadel.get_user_by_login_name("disabled_user@famedly.de").await;
+	let user = zitadel
+		.get_user_by_login_name("disabled_user@famedly.de")
+		.await
+		.expect("could not query Zitadel users");
 
-	if let Err(error) = user {
-		match error {
-			ZitadelError::TonicResponseError(status)
-				if status.code() == TonicErrorCode::NotFound =>
-			{
-				return;
-			}
-			_ => {
-				panic!("zitadel failed while searching for user: {error}")
-			}
-		}
-	} else {
-		panic!("disabled user was synced: {user:?}");
-	}
+	assert!(user.is_none(), "disabled user was synced: {user:?}");
 }
 
 #[test(tokio::test)]
@@ -384,7 +358,8 @@ async fn test_e2e_sso() {
 		.expect("could not query Zitadel users")
 		.expect("could not find user");
 
-	let idps = zitadel.list_user_idps(user.id).await.expect("could not get user idps");
+	let user_id = user.user_id().expect("user lacks an ID");
+	let idps = zitadel.user_idp_links(user_id).await.expect("could not get user idps");
 
 	assert!(!idps.is_empty());
 }
@@ -418,13 +393,11 @@ async fn test_e2e_sync_change() {
 		.expect("could not query Zitadel users")
 		.expect("missing Zitadel user");
 
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(user.phone.expect("phone missing").phone, "+12015550123");
-		}
-
-		_ => panic!("human user became a machine user?"),
-	}
+	let human = user.human().expect("human user became a machine user?");
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some("+12015550123")
+	);
 }
 
 #[test(tokio::test)]
@@ -446,19 +419,19 @@ async fn test_e2e_sync_disable_and_reenable() {
 
 	perform_sync(config.clone()).await.expect("syncing failed");
 	let zitadel = open_zitadel_connection().await;
-	let user = zitadel.get_user_by_login_name("disable@famedly.de").await;
-	assert!(user.is_ok_and(|u| u.is_some()));
+	let user = zitadel.get_user_by_login_name("disable@famedly.de").await.expect("query failed");
+	assert!(user.is_some());
 
 	ldap.change_user("disable", vec![("shadowFlag", HashSet::from(["514"]))]).await;
 	perform_sync(config.clone()).await.expect("syncing failed");
-	let user = zitadel.get_user_by_login_name("disable@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	let user = zitadel.get_user_by_login_name("disable@famedly.de").await.expect("query failed");
+	assert!(user.is_none());
 
 	ldap.change_user("disable", vec![("shadowFlag", HashSet::from(["512"]))]).await;
 	perform_sync(config.clone()).await.expect("syncing failed");
 	let zitadel = open_zitadel_connection().await;
-	let user = zitadel.get_user_by_login_name("disable@famedly.de").await;
-	assert!(user.is_ok_and(|u| u.is_some()));
+	let user = zitadel.get_user_by_login_name("disable@famedly.de").await.expect("query failed");
+	assert!(user.is_some());
 }
 
 #[test(tokio::test)]
@@ -485,9 +458,10 @@ async fn test_e2e_sync_email_change() {
 	perform_sync(config.clone()).await.expect("syncing failed");
 
 	let zitadel = open_zitadel_connection().await;
-	let user = zitadel.get_user_by_login_name("email_changed@famedly.de").await;
+	let user =
+		zitadel.get_user_by_login_name("email_changed@famedly.de").await.expect("query failed");
 
-	assert!(user.is_ok());
+	assert!(user.is_some());
 }
 
 #[test(tokio::test)]
@@ -544,12 +518,31 @@ async fn test_e2e_sync_safe_deletion() {
 	assert!(user.is_some());
 
 	// Disabled LDAP users should be deleted from Zitadel
-	let user = zitadel.get_user_by_login_name("to_be_disabled@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	let user =
+		zitadel.get_user_by_login_name("to_be_disabled@famedly.de").await.expect("query failed");
+	assert!(user.is_none());
 
-	assert!(zitadel.get_user_by_login_name("another_user@example.test").await.is_ok());
-	assert!(zitadel.get_user_by_login_name("projectless_user@example.test").await.is_ok());
-	assert!(zitadel.get_user_by_login_name("another_org_user@example.test").await.is_ok());
+	assert!(
+		zitadel
+			.get_user_by_login_name("another_user@example.test")
+			.await
+			.expect("query failed")
+			.is_some()
+	);
+	assert!(
+		zitadel
+			.get_user_by_login_name("projectless_user@example.test")
+			.await
+			.expect("query failed")
+			.is_some()
+	);
+	assert!(
+		zitadel
+			.get_user_by_login_name("another_org_user@example.test")
+			.await
+			.expect("query failed")
+			.is_some()
+	);
 }
 
 #[test(tokio::test)]
@@ -561,28 +554,17 @@ async fn test_e2e_user_no_localpart_skipped() {
 	let zitadel = open_zitadel_connection().await;
 
 	// Create user in Zitadel
-	let user = ImportHumanUserRequest {
-		user_name: "maxmustermann".to_owned(),
-		profile: Some(Profile {
-			first_name: "Test".to_owned(),
-			last_name: "User".to_owned(),
-			display_name: "User, Test".to_owned(),
-			gender: Gender::Unspecified.into(),
-			nick_name: "deadbeef".to_owned(),
-			preferred_language: String::default(),
-		}),
-		email: Some(Email { email: "max@mustermann.de".to_owned(), is_email_verified: true }),
-		phone: Some(Phone { phone: "+12345678901".to_owned(), is_phone_verified: true }),
-		password: String::default(),
-		hashed_password: None,
-		password_change_required: false,
-		request_passwordless_registration: false,
-		otp_code: String::default(),
-		idps: vec![],
-	};
-
 	zitadel
-		.create_human_user(&config.zitadel.organization_id, user)
+		.create_test_human_user(
+			&config.zitadel.organization_id,
+			"maxmustermann",
+			"Test",
+			"User",
+			"User, Test",
+			"deadbeef",
+			"max@mustermann.de",
+			"+12345678901",
+		)
 		.await
 		.expect("Failed to create user");
 
@@ -752,14 +734,11 @@ async fn test_e2e_no_phone() {
 
 	let user = user.expect("could not find user");
 
-	if let Some(UserType::Human(user)) = user.r#type {
-		// Yes, I know, the codegen for the zitadel crate is
-		// pretty crazy. A missing phone number is represented as
-		// Some(Phone { phone: "", is_phone_Verified: _ })
-		assert_eq!(user.phone.expect("user lacks a phone number object").phone, "");
-	} else {
-		panic!("user lacks details");
-	};
+	let human = user.human().expect("user lacks details");
+	// A missing phone number may be represented either as an absent phone
+	// object or as an empty phone string, depending on the Zitadel response.
+	let phone = human.phone().and_then(|phone| phone.phone()).map_or("", String::as_str);
+	assert_eq!(phone, "");
 }
 
 #[test(tokio::test)]
@@ -799,27 +778,20 @@ async fn test_e2e_sync_invalid_phone() {
 		.expect("could not query Zitadel users");
 	assert!(user.is_some());
 	let user = user.expect("could not find user");
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(
-				user.phone.expect("phone field should always be present").phone,
-				"+12015550123"
-			);
-		}
-		_ => panic!("user lacks details"),
-	}
+	let human = user.human().expect("user lacks details");
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some("+12015550123")
+	);
 	let user = zitadel
 		.get_user_by_login_name("bad_phone_all_along@famedly.de")
 		.await
 		.expect("could not query Zitadel users");
 	assert!(user.is_some());
 	let user = user.expect("could not find user");
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(user.phone.expect("phone field should always be present").phone, "");
-		}
-		_ => panic!("user lacks details"),
-	}
+	let human = user.human().expect("user lacks details");
+	let phone = human.phone().and_then(|phone| phone.phone()).map_or("", String::as_str);
+	assert_eq!(phone, "");
 
 	ldap.change_user("good_gone_bad_phone", vec![("telephoneNumber", HashSet::from(["abc"]))])
 		.await;
@@ -832,12 +804,9 @@ async fn test_e2e_sync_invalid_phone() {
 		.expect("could not query Zitadel users");
 	assert!(user.is_some());
 	let user = user.expect("could not find user");
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(user.phone.expect("phone field should always be present").phone, "");
-		}
-		_ => panic!("user lacks details"),
-	}
+	let human = user.human().expect("user lacks details");
+	let phone = human.phone().and_then(|phone| phone.phone()).map_or("", String::as_str);
+	assert_eq!(phone, "");
 }
 
 #[test(tokio::test)]
@@ -890,14 +859,10 @@ async fn test_e2e_binary_uid() {
 		.expect("could not query Zitadel users")
 		.expect("user not found");
 
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			let profile = user.profile.expect("user lacks profile");
-			// The ID should be hex encoded in Zitadel
-			assert_eq!(profile.nick_name, hex::encode(binary_uid));
-		}
-		_ => panic!("user lacks human details"),
-	}
+	let human = user.human().expect("user lacks human details");
+	let profile = human.profile().expect("user lacks profile");
+	// The ID should be hex encoded in Zitadel
+	assert_eq!(profile.nick_name().map(String::as_str), Some(hex::encode(binary_uid).as_str()));
 
 	// Test update to a different binary ID that is valid UTF-8
 
@@ -916,15 +881,11 @@ async fn test_e2e_binary_uid() {
 		.expect("could not query Zitadel users")
 		.expect("user not found after update");
 
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			let profile = user.profile.expect("user lacks profile");
-			tracing::info!("profile: {:#?}", profile);
-			// Verify ID was updated
-			assert_eq!(profile.nick_name, hex::encode(new_binary_id));
-		}
-		_ => panic!("user lost human details after update"),
-	}
+	let human = user.human().expect("user lost human details after update");
+	let profile = human.profile().expect("user lacks profile");
+	tracing::info!("profile: {profile:#?}");
+	// Verify ID was updated
+	assert_eq!(profile.nick_name().map(String::as_str), Some(hex::encode(new_binary_id).as_str()));
 
 	// Test update to binary ID that is NOT valid UTF-8
 
@@ -943,14 +904,13 @@ async fn test_e2e_binary_uid() {
 		.expect("could not query Zitadel users")
 		.expect("user not found after update");
 
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			let profile = user.profile.expect("user lacks profile");
-			// Verify ID was updated
-			assert_eq!(profile.nick_name, hex::encode(invalid_binary_id));
-		}
-		_ => panic!("user lost human details after update"),
-	}
+	let human = user.human().expect("user lost human details after update");
+	let profile = human.profile().expect("user lacks profile");
+	// Verify ID was updated
+	assert_eq!(
+		profile.nick_name().map(String::as_str),
+		Some(hex::encode(invalid_binary_id).as_str())
+	);
 }
 
 #[test(tokio::test)]
@@ -976,9 +936,9 @@ async fn test_e2e_dry_run() {
 
 	// Assert the user does not sync, because this is a dry run
 	perform_sync(dry_run_config.clone()).await.expect("syncing failed");
-	assert!(zitadel.get_user_by_login_name("dry_run@famedly.de").await.is_err_and(
-		|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound),
-	));
+	assert!(
+		zitadel.get_user_by_login_name("dry_run@famedly.de").await.expect("query failed").is_none()
+	);
 
 	// Actually sync the user so we can test other changes=
 	perform_sync(config.clone()).await.expect("syncing failed");
@@ -992,22 +952,24 @@ async fn test_e2e_dry_run() {
 		.expect("could not query Zitadel users")
 		.expect("could not find user");
 
-	assert!(
-		matches!(user.r#type, Some(UserType::Human(user)) if user.phone.as_ref().expect("phone missing").phone == "+12015550123")
+	let human = user.human().expect("human user became a machine user?");
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some("+12015550123")
 	);
 
 	// Assert that disabling a user does not sync
 	ldap.change_user("dry_run", vec![("shadowFlag", HashSet::from(["514"]))]).await;
 	perform_sync(dry_run_config.clone()).await.expect("syncing failed");
 	assert!(
-		zitadel.get_user_by_login_name("dry_run@famedly.de").await.is_ok_and(|user| user.is_some())
+		zitadel.get_user_by_login_name("dry_run@famedly.de").await.expect("query failed").is_some()
 	);
 
 	// Assert that a user deletion does not sync
 	ldap.delete_user("dry_run").await;
 	perform_sync(dry_run_config.clone()).await.expect("syncing failed");
 	assert!(
-		zitadel.get_user_by_login_name("dry_run@famedly.de").await.is_ok_and(|user| user.is_some())
+		zitadel.get_user_by_login_name("dry_run@famedly.de").await.expect("query failed").is_some()
 	);
 }
 
@@ -1072,7 +1034,7 @@ async fn test_e2e_sync_deactivated_only() {
 	let user = zitadel.get_user_by_login_name("deleted_disable_only@famedly.de").await;
 	assert!(user.is_ok_and(|u| u.is_some()));
 	let user = zitadel.get_user_by_login_name("reenabled_disable_only@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 
 	config.feature_flags.push(FeatureFlag::DeactivateOnly);
 
@@ -1098,13 +1060,13 @@ async fn test_e2e_sync_deactivated_only() {
 	perform_sync(config.clone()).await.expect("syncing failed");
 
 	let user = zitadel.get_user_by_login_name("disable_disable_only@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 	let user = zitadel.get_user_by_login_name("created_disable_only@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 	let user = zitadel.get_user_by_login_name("deleted_disable_only@famedly.de").await;
 	assert!(user.is_ok_and(|u| u.is_some()));
 	let user = zitadel.get_user_by_login_name("reenabled_disable_only@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 
 	let user = zitadel
 		.get_user_by_login_name("changed_disable_only@famedly.de")
@@ -1112,13 +1074,11 @@ async fn test_e2e_sync_deactivated_only() {
 		.expect("could not query Zitadel users")
 		.expect("missing Zitadel user");
 
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(user.phone.expect("phone missing").phone, "+12015550124");
-		}
-
-		_ => panic!("human user became a machine user?"),
-	}
+	let human = user.human().expect("human user became a machine user?");
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some("+12015550124")
+	);
 }
 
 #[test(tokio::test)]
@@ -1143,48 +1103,37 @@ async fn test_e2e_ukt_sync() {
 		})
 		.expect("UKT configuration is missing");
 
-	let user = ImportHumanUserRequest {
-		user_name: "delete_me@famedly.de".to_owned(),
-		profile: Some(Profile {
-			first_name: "First".to_owned(),
-			last_name: "Last".to_owned(),
-			display_name: "First Last".to_owned(),
-			gender: Gender::Unspecified.into(),
-			nick_name: "nickname".to_owned(),
-			preferred_language: String::default(),
-		}),
-		email: Some(Email { email: "delete_me@famedly.de".to_owned(), is_email_verified: true }),
-		phone: Some(Phone { phone: "+12015551111".to_owned(), is_phone_verified: true }),
-		password: String::default(),
-		hashed_password: None,
-		password_change_required: false,
-		request_passwordless_registration: false,
-		otp_code: String::default(),
-		idps: vec![],
-	};
-
 	let zitadel = open_zitadel_connection().await;
-	let user = zitadel
-		.create_human_user(&config.zitadel.organization_id, user)
+	let user_id = zitadel
+		.create_test_human_user(
+			&config.zitadel.organization_id,
+			"delete_me@famedly.de",
+			"First",
+			"Last",
+			"First Last",
+			"nickname",
+			"delete_me@famedly.de",
+			"+12015551111",
+		)
 		.await
 		.expect("failed to create user");
 
 	zitadel
 		.set_user_metadata(
-			Some(&config.zitadel.organization_id),
-			user.clone(),
-			"localpart".to_owned(),
+			&user_id,
+			"localpart",
 			"irrelevant",
+			Some(config.zitadel.organization_id.clone()),
 		)
 		.await
 		.expect("Failed to set user localpart");
 
 	zitadel
 		.set_user_metadata(
-			Some(&config.zitadel.organization_id),
-			user.clone(),
-			"preferred_username".to_owned(),
+			&user_id,
+			"preferred_username",
 			"irrelevant",
+			Some(config.zitadel.organization_id.clone()),
 		)
 		.await
 		.expect("Failed to set user preferred name");
@@ -1195,12 +1144,12 @@ async fn test_e2e_ukt_sync() {
 		.expect("could not query Zitadel users");
 	assert!(user.is_some());
 	let user = user.expect("could not find user");
-	assert_eq!(user.user_name, "delete_me@famedly.de");
+	assert_eq!(user.username().map(String::as_str), Some("delete_me@famedly.de"));
 
 	perform_sync(config.clone()).await.expect("syncing failed");
 
 	let user = zitadel.get_user_by_login_name("delete_me@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 }
 
 #[test(tokio::test)]
@@ -1217,48 +1166,41 @@ async fn test_e2e_csv_sync() {
 		.await
 		.expect("could not query Zitadel users");
 	let user = user.expect("could not find user");
-	assert_eq!(user.user_name, "john.doe@example.com");
+	assert_eq!(user.username().map(String::as_str), Some("john.doe@example.com"));
 
-	if let Some(UserType::Human(user)) = user.r#type {
-		let profile = user.profile.expect("user lacks a profile");
-		let phone = user.phone.expect("user lacks a phone number");
-		let email = user.email.expect("user lacks an email address");
+	let human = user.human().expect("user lacks details");
+	let profile = human.profile().expect("user lacks a profile");
+	let phone = human.phone().expect("user lacks a phone number");
+	let email = human.email().expect("user lacks an email address");
 
-		assert_eq!(profile.first_name, "John");
-		assert_eq!(profile.last_name, "Doe");
-		assert_eq!(profile.display_name, "Doe, John");
-		assert_eq!(phone.phone, "+1111111111");
-		assert!(phone.is_phone_verified);
-		assert_eq!(email.email, "john.doe@example.com");
-		assert!(email.is_email_verified);
-	} else {
-		panic!("user lacks details");
-	}
+	assert_eq!(profile.given_name().map(String::as_str), Some("John"));
+	assert_eq!(profile.family_name().map(String::as_str), Some("Doe"));
+	assert_eq!(profile.display_name().map(String::as_str), Some("Doe, John"));
+	assert_eq!(phone.phone().map(String::as_str), Some("+1111111111"));
+	assert_eq!(phone.is_verified(), Some(&true));
+	assert_eq!(email.email().map(String::as_str), Some("john.doe@example.com"));
+	assert_eq!(email.is_verified(), Some(&true));
+
+	let user_id = user.user_id().expect("user lacks an ID").clone();
 
 	let preferred_username = zitadel
-		.get_user_metadata(
-			Some(config.zitadel.organization_id.clone()),
-			&user.id,
-			"preferred_username",
-		)
+		.get_metadata(&config.zitadel.organization_id, &user_id, "preferred_username")
 		.await
 		.expect("could not get user metadata");
 	assert_eq!(preferred_username, Some("john.doe@example.com".to_owned()));
 
 	let localpart = zitadel
-		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
+		.get_metadata(&config.zitadel.organization_id, &user_id, "localpart")
 		.await
 		.expect("could not get user metadata")
 		.expect("missing localpart");
 	assert_eq!(localpart, "john.doe", "Unexpected Zitadel userId for user without localpart");
 
-	let grants = zitadel
-		.list_user_grants(&config.zitadel.organization_id, &user.id)
+	let role_keys = zitadel
+		.user_role_keys(&config.zitadel.organization_id, &config.zitadel.project_id, &user_id)
 		.await
 		.expect("failed to get user grants");
-
-	let grant = grants.result.first().expect("no user grants found");
-	assert!(grant.role_keys.clone().into_iter().any(|key| key == FAMEDLY_USER_ROLE));
+	assert!(role_keys.iter().any(|key| key == FAMEDLY_USER_ROLE));
 
 	// Test user without localpart (should use UUID)
 	let user = zitadel
@@ -1267,11 +1209,15 @@ async fn test_e2e_csv_sync() {
 		.expect("could not query Zitadel users");
 
 	let user = user.expect("could not find user");
-	assert_eq!(user.user_name, "jane.smith@example.com");
+	assert_eq!(user.username().map(String::as_str), Some("jane.smith@example.com"));
 
 	let uuid = Uuid::new_v5(&FAMEDLY_NAMESPACE, "jane.smith@example.com".as_bytes());
 	let localpart = zitadel
-		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
+		.get_metadata(
+			&config.zitadel.organization_id,
+			user.user_id().expect("user lacks an ID"),
+			"localpart",
+		)
 		.await
 		.expect("could not get user metadata");
 	assert_eq!(localpart, Some(uuid.to_string()), "Localpart metadata should match userId");
@@ -1288,7 +1234,9 @@ async fn test_e2e_csv_sync() {
 		.await
 		.expect("could not query Zitadel users")
 		.expect("Must be able to get the user pre-sync")
-		.id;
+		.user_id()
+		.expect("user lacks an ID")
+		.clone();
 
 	perform_sync(config.clone()).await.expect("syncing failed");
 
@@ -1298,30 +1246,53 @@ async fn test_e2e_csv_sync() {
 		.expect("could not query Zitadel users");
 
 	let user = user.expect("could not find user");
-	assert_eq!(user.user_name, "john.doe@example.com");
-	assert_eq!(user.id, user_id, "Zitadel userId should not change");
+	assert_eq!(user.username().map(String::as_str), Some("john.doe@example.com"));
+	assert_eq!(user.user_id(), Some(&user_id), "Zitadel userId should not change");
 
-	if let Some(UserType::Human(user)) = user.r#type {
-		let profile = user.profile.expect("user lacks a profile");
-		let phone = user.phone.expect("user lacks a phone number");
-		let email = user.email.expect("user lacks an email address");
+	let human = user.human().expect("user lacks details");
+	let profile = human.profile().expect("user lacks a profile");
+	let phone = human.phone().expect("user lacks a phone number");
+	let email = human.email().expect("user lacks an email address");
 
-		assert_eq!(profile.first_name, "Changed_Name");
-		assert_eq!(profile.last_name, "Changed_Surname");
-		assert_eq!(profile.display_name, "Changed_Surname, Changed_Name");
-		assert_eq!(phone.phone, "+2222222222");
-		assert!(phone.is_phone_verified);
-		assert_eq!(email.email, "john.doe@example.com");
-		assert!(email.is_email_verified);
-	} else {
-		panic!("user lacks details");
-	}
+	assert_eq!(profile.given_name().map(String::as_str), Some("Changed_Name"));
+	assert_eq!(profile.family_name().map(String::as_str), Some("Changed_Surname"));
+	assert_eq!(profile.display_name().map(String::as_str), Some("Changed_Surname, Changed_Name"));
+	assert_eq!(phone.phone().map(String::as_str), Some("+2222222222"));
+	assert_eq!(phone.is_verified(), Some(&true));
+	assert_eq!(email.email().map(String::as_str), Some("john.doe@example.com"));
+	assert_eq!(email.is_verified(), Some(&true));
 
 	let localpart = zitadel
-		.get_user_metadata(Some(config.zitadel.organization_id.clone()), &user.id, "localpart")
+		.get_metadata(
+			&config.zitadel.organization_id,
+			user.user_id().expect("user lacks an ID"),
+			"localpart",
+		)
 		.await
 		.expect("could not get user metadata");
-	assert_eq!(localpart, Some("john.doe".to_owned()),);
+	assert_eq!(localpart, Some("john.doe".to_owned()));
+}
+
+/// Seed the LDAP fixtures used by [`test_e2e_ldap_with_ukt_sync`].
+async fn seed_ldap_with_ukt_users(ldap: &mut Ldap) {
+	for (last_name, uid) in [
+		("To Be There", "to_be_there"),
+		("Not To Be There", "not_to_be_there"),
+		("Persist Deletion", "persist_deletion"),
+		("Not To Be There Later", "not_to_be_there_later"),
+		("To Be Changed", "to_be_changed"),
+	] {
+		ldap.create_user(
+			"John",
+			last_name,
+			"Johnny",
+			&format!("{uid}@famedly.de"),
+			Some("+12015551111"),
+			uid,
+			false,
+		)
+		.await;
+	}
 }
 
 #[test(tokio::test)]
@@ -1334,60 +1305,7 @@ async fn test_e2e_ldap_with_ukt_sync() {
 	// LDAP SYNC
 
 	let mut ldap = Ldap::new().await;
-	ldap.create_user(
-		"John",
-		"To Be There",
-		"Johnny",
-		"to_be_there@famedly.de",
-		Some("+12015551111"),
-		"to_be_there",
-		false,
-	)
-	.await;
-
-	ldap.create_user(
-		"John",
-		"Not To Be There",
-		"Johnny",
-		"not_to_be_there@famedly.de",
-		Some("+12015551111"),
-		"not_to_be_there",
-		false,
-	)
-	.await;
-
-	ldap.create_user(
-		"John",
-		"Persist Deletion",
-		"Johnny",
-		"persist_deletion@famedly.de",
-		Some("+12015551111"),
-		"persist_deletion",
-		false,
-	)
-	.await;
-
-	ldap.create_user(
-		"John",
-		"Not To Be There Later",
-		"Johnny",
-		"not_to_be_there_later@famedly.de",
-		Some("+12015551111"),
-		"not_to_be_there_later",
-		false, // Start enabled, later will be disabled
-	)
-	.await;
-
-	ldap.create_user(
-		"John",
-		"To Be Changed",
-		"Johnny",
-		"to_be_changed@famedly.de",
-		Some("+12015551111"),
-		"to_be_changed",
-		false,
-	)
-	.await;
+	seed_ldap_with_ukt_users(&mut ldap).await;
 
 	let ldap_config = ldap_config().await;
 	perform_sync(ldap_config.clone()).await.expect("syncing failed");
@@ -1415,9 +1333,7 @@ async fn test_e2e_ldap_with_ukt_sync() {
 
 	// Should be deleted based on email
 	let user = zitadel.get_user_by_login_name("not_to_be_there@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error,
-	ZitadelError::TonicResponseError(status) if status.code() ==
-	TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 
 	let user = zitadel
 		.get_user_by_login_name("to_be_there@famedly.de")
@@ -1437,12 +1353,11 @@ async fn test_e2e_ldap_with_ukt_sync() {
 		.expect("could not query Zitadel users");
 	assert!(user.is_some());
 	let user = user.expect("could not find user");
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(user.phone.expect("phone missing").phone, "+12015551111");
-		}
-		_ => panic!("human user became a machine user?"),
-	}
+	let human = user.human().expect("human user became a machine user?");
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some("+12015551111")
+	);
 
 	// UPDATES IN LDAP
 
@@ -1461,14 +1376,14 @@ async fn test_e2e_ldap_with_ukt_sync() {
 		.expect("could not query Zitadel users");
 	assert!(user.is_some());
 	let user = user.expect("could not find user");
-	match user.r#type {
-		Some(UserType::Human(user)) => {
-			assert_eq!(user.phone.expect("phone missing").phone, "+12015550123");
-		}
-		_ => panic!("human user became a machine user?"),
-	}
+	let human = user.human().expect("human user became a machine user?");
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some("+12015550123")
+	);
 
-	// Should not be deleted because it's just missing from LDAP but wasn't disabled
+	// Should not be deleted because it's just missing from LDAP but wasn't
+	// disabled
 	let user = zitadel
 		.get_user_by_login_name("persist_deletion@famedly.de")
 		.await
@@ -1477,7 +1392,7 @@ async fn test_e2e_ldap_with_ukt_sync() {
 
 	// Should be deleted because it's disabled
 	let user = zitadel.get_user_by_login_name("not_to_be_there_later@famedly.de").await;
-	assert!(user.is_err_and(|error| matches!(error, ZitadelError::TonicResponseError(status) if status.code() == TonicErrorCode::NotFound)));
+	assert!(matches!(user, Ok(None)));
 }
 
 #[test(tokio::test)]
@@ -1509,21 +1424,26 @@ async fn test_e2e_sso_linking() {
 		.expect("could not query Zitadel users")
 		.expect("could not find user");
 
-	let idps = zitadel.list_user_idps(user.id.clone()).await.expect("could not get user IDPs");
+	let user_id = user.user_id().expect("user lacks an ID");
+	let idps = zitadel.user_idp_links(user_id).await.expect("could not get user IDPs");
 
 	assert!(!idps.is_empty(), "User should have IDP links");
 
 	let idp = idps.first().expect("No IDP link found");
 	assert_eq!(
-		idp.idp_id,
-		*config.zitadel.idp_id.as_ref().unwrap(),
+		idp.idp_id().map(String::as_str),
+		Some(config.zitadel.idp_id.as_ref().unwrap().as_str()),
 		"IDP link should match configured IDP"
 	);
-	assert_eq!(idp.provided_user_id, test_uid, "IDP provided_user_id should match plain LDAP uid");
-	assert_eq!(idp.user_id, user.id, "IDP user_id should match Zitadel user id");
 	assert_eq!(
-		idp.provided_user_name, test_email,
-		"IDP provided_user_name should match test_email"
+		idp.user_id().map(String::as_str),
+		Some(test_uid),
+		"IDP provided user id should match plain LDAP uid"
+	);
+	assert_eq!(
+		idp.user_name().map(String::as_str),
+		Some(test_email),
+		"IDP provided user name should match test_email"
 	);
 }
 
@@ -1533,9 +1453,9 @@ async fn test_e2e_migrate_base64_id() {
 	let config = ldap_config().await;
 	cleanup_test_users(config).await;
 
-	// The uid for this test must be such that encodes to such base64 string that
-	// doesn't look like hex. Otherwise, we need to have a sample of users so the
-	// script determines encoding heuristically. This is tested later in
+	// The uid for this test must be such that encodes to such base64 string
+	// that doesn't look like hex. Otherwise, we need to have a sample of users
+	// so the script determines encoding heuristically. This is tested later in
 	// test_e2e_migrate_ambiguous_id
 	let uid = "base64_test";
 	let email = "migrate_test@famedly.de";
@@ -1608,61 +1528,47 @@ async fn test_e2e_migrate_ambiguous_id_as_base64() {
 	// (all alphanumeric and length % 4 == 0)
 	let ambiguous_id = "cafe".to_owned();
 
-	// The migration logic should decide to treat it as hex when looking at it on
-	// its own, because we check for hex first (it's a subset of base64 and thus
-	// more restrictive)
+	// The migration logic should decide to treat it as hex when looking at it
+	// on its own, because we check for hex first (it's a subset of base64 and
+	// thus more restrictive)
 	let expected_id = ambiguous_id.clone();
 	run_migration_test(config, email, user_name, ambiguous_id, expected_id).await;
 
-	// When we create some base64-only encoded values in the database, the migration
-	// logic should heuristically find out, that the DB has external IDs encoded
-	// with base64 and thus treat the ambiguous ID as base64 even though it can be
-	// both base64 and hex
-	let base_64_user = ImportHumanUserRequest {
-		user_name: "another_test".to_owned(),
-		profile: Some(Profile {
-			first_name: "Test".to_owned(),
-			last_name: "User".to_owned(),
-			display_name: "User, Test".to_owned(),
-			gender: Gender::Unspecified.into(),
-			nick_name: "Z9FmZQ==".to_owned(), // base64 encoded
-			preferred_language: String::default(),
-		}),
-		email: Some(Email {
-			email: "another_test@example.com".to_owned(),
-			is_email_verified: true,
-		}),
-		phone: Some(Phone { phone: "+12345678901".to_owned(), is_phone_verified: true }),
-		password: String::default(),
-		hashed_password: None,
-		password_change_required: false,
-		request_passwordless_registration: false,
-		otp_code: String::default(),
-		idps: vec![],
-	};
-
+	// When we create some base64-only encoded values in the database, the
+	// migration logic should heuristically find out, that the DB has external
+	// IDs encoded with base64 and thus treat the ambiguous ID as base64 even
+	// though it can be both base64 and hex
 	let zitadel = open_zitadel_connection().await;
 	let temp_user = zitadel
-		.create_human_user(&config.zitadel.organization_id, base_64_user)
+		.create_test_human_user(
+			&config.zitadel.organization_id,
+			"another_test",
+			"Test",
+			"User",
+			"User, Test",
+			"Z9FmZQ==", // base64 encoded
+			"another_test@example.com",
+			"+12345678901",
+		)
 		.await
 		.expect("Failed to create user");
 
 	zitadel
 		.set_user_metadata(
-			Some(&config.zitadel.organization_id),
-			temp_user.clone(),
-			"localpart".to_owned(),
+			&temp_user,
+			"localpart",
 			"irrelevant",
+			Some(config.zitadel.organization_id.clone()),
 		)
 		.await
 		.expect("Failed to set user localpart");
 
 	zitadel
 		.set_user_metadata(
-			Some(&config.zitadel.organization_id),
-			temp_user.clone(),
-			"preferred_username".to_owned(),
+			&temp_user,
+			"preferred_username",
 			"irrelevant",
+			Some(config.zitadel.organization_id.clone()),
 		)
 		.await
 		.expect("Failed to set user preferred name");
@@ -1678,7 +1584,7 @@ async fn test_e2e_migrate_ambiguous_id_as_base64() {
 
 	run_migration_test(config, email, user_name, ambiguous_id, expected_id).await;
 
-	zitadel.remove_user(temp_user).await.expect("Failed to delete user");
+	zitadel.delete_user(&temp_user).await.expect("Failed to delete user");
 }
 
 #[test(tokio::test)]
@@ -1721,21 +1627,21 @@ async fn test_e2e_migrate_then_ldap_sync() {
 		.expect("Failed to get user after LDAP sync")
 		.expect("User not found after LDAP sync");
 
-	match user.r#type {
-		Some(UserType::Human(human)) => {
-			let profile = human.profile.expect("User lacks profile after LDAP sync");
-			let expected_hex_id = hex::encode(uid.as_bytes());
-			assert_eq!(
-				profile.nick_name, expected_hex_id,
-				"External ID not in hex encoding after LDAP sync for user '{email}'"
-			);
-			assert_eq!(
-				profile.first_name, "New First Name",
-				"Fist name was not updated by LDAP sync for user '{email}'"
-			);
-		}
-		_ => panic!("User lacks human details after LDAP sync for user '{email}'"),
-	}
+	let human = user
+		.human()
+		.unwrap_or_else(|| panic!("User lacks human details after LDAP sync for user '{email}'"));
+	let profile = human.profile().expect("User lacks profile after LDAP sync");
+	let expected_hex_id = hex::encode(uid.as_bytes());
+	assert_eq!(
+		profile.nick_name().map(String::as_str),
+		Some(expected_hex_id.as_str()),
+		"External ID not in hex encoding after LDAP sync for user '{email}'"
+	);
+	assert_eq!(
+		profile.given_name().map(String::as_str),
+		Some("New First Name"),
+		"Fist name was not updated by LDAP sync for user '{email}'"
+	);
 }
 
 #[test(tokio::test)]
@@ -1777,18 +1683,14 @@ async fn test_e2e_sync_user_already_exists() {
 		.expect("Failed to get user after initial sync")
 		.expect("User not found after initial sync");
 
-	let initial_zitadel_id = user.id.clone();
-	match user.r#type {
-		Some(UserType::Human(human)) => {
-			let profile = human.profile.expect("User lacks profile");
-			assert_eq!(
-				profile.nick_name,
-				hex::encode(initial_external_id.as_bytes()),
-				"Initial external ID not encoded correctly"
-			);
-		}
-		_ => panic!("User is not human type"),
-	}
+	let initial_zitadel_id = user.user_id().expect("user lacks an ID").clone();
+	let human = user.human().expect("User is not human type");
+	let profile = human.profile().expect("User lacks profile");
+	assert_eq!(
+		profile.nick_name().map(String::as_str),
+		Some(hex::encode(initial_external_id.as_bytes()).as_str()),
+		"Initial external ID not encoded correctly"
+	);
 
 	// Now change the external ID in LDAP by deleting and re-creating a new user
 	// with the same email
@@ -1818,28 +1720,36 @@ async fn test_e2e_sync_user_already_exists() {
 
 	// Should be the same user (same Zitadel ID)
 	assert_eq!(
-		recreated_user.id, initial_zitadel_id,
+		recreated_user.user_id(),
+		Some(&initial_zitadel_id),
 		"User ID changed - should be same user updated"
 	);
 
-	match recreated_user.r#type {
-		Some(UserType::Human(human)) => {
-			let profile = human.profile.expect("Updated user lacks profile");
-			assert_eq!(
-				profile.nick_name,
-				hex::encode(recreated_external_id.as_bytes()),
-				"External ID was not updated correctly"
-			);
+	let human = recreated_user.human().expect("Updated user is not human type");
+	let profile = human.profile().expect("Updated user lacks profile");
+	assert_eq!(
+		profile.nick_name().map(String::as_str),
+		Some(hex::encode(recreated_external_id.as_bytes()).as_str()),
+		"External ID was not updated correctly"
+	);
 
-			// Verify other fields are still correct
-			assert_eq!(profile.first_name, "Test", "First name should be preserved");
-			assert_eq!(profile.last_name, "User", "Last name should be preserved");
+	// Verify other fields are still correct
+	assert_eq!(
+		profile.given_name().map(String::as_str),
+		Some("Test"),
+		"First name should be preserved"
+	);
+	assert_eq!(
+		profile.family_name().map(String::as_str),
+		Some("User"),
+		"Last name should be preserved"
+	);
 
-			let phone_obj = human.phone.expect("Updated user lacks phone");
-			assert_eq!(phone_obj.phone, phone, "Phone should be preserved");
-		}
-		_ => panic!("Updated user is not human type"),
-	}
+	assert_eq!(
+		human.phone().and_then(|phone| phone.phone()).map(String::as_str),
+		Some(phone),
+		"Phone should be preserved"
+	);
 }
 
 #[test(tokio::test)]
@@ -1857,38 +1767,27 @@ async fn test_e2e_sync_user_already_exists_error_case() {
 	let phone = "+12015550222";
 
 	// Create user directly in Zitadel without localpart metadata
-	let user = ImportHumanUserRequest {
-		user_name: email.to_owned(),
-		profile: Some(Profile {
-			first_name: "Direct".to_owned(),
-			last_name: "User".to_owned(),
-			display_name: "User, Direct".to_owned(),
-			gender: Gender::Unspecified.into(),
-			nick_name: hex::encode("different_external_id".as_bytes()),
-			preferred_language: String::default(),
-		}),
-		email: Some(Email { email: email.to_owned(), is_email_verified: true }),
-		phone: Some(Phone { phone: phone.to_owned(), is_phone_verified: true }),
-		password: String::default(),
-		hashed_password: None,
-		password_change_required: false,
-		request_passwordless_registration: false,
-		otp_code: String::default(),
-		idps: vec![],
-	};
-
 	let user_id = zitadel
-		.create_human_user(&config.zitadel.organization_id, user)
+		.create_test_human_user(
+			&config.zitadel.organization_id,
+			email,
+			"Direct",
+			"User",
+			"User, Direct",
+			&hex::encode("different_external_id".as_bytes()),
+			email,
+			phone,
+		)
 		.await
 		.expect("Failed to create user directly in Zitadel");
 
 	zitadel
 		.add_user_grant(
 			Some(config.zitadel.organization_id.clone()),
-			user_id,
+			&user_id,
 			config.zitadel.project_id.clone(),
 			None,
-			vec![FAMEDLY_USER_ROLE.to_owned()],
+			Some(vec![FAMEDLY_USER_ROLE.to_owned()]),
 		)
 		.await
 		.expect("Failed to create user grant");
@@ -1918,7 +1817,7 @@ async fn test_e2e_sync_user_already_exists_error_case() {
 /// Open a connection to the configured Zitadel backend
 async fn open_zitadel_connection() -> Zitadel {
 	let zitadel_config = ldap_config().await.zitadel.clone();
-	Zitadel::new(zitadel_config.url, zitadel_config.key_file)
+	Zitadel::new(zitadel_config.url, zitadel_config.key_file, None)
 		.await
 		.expect("failed to set up Zitadel client")
 }
@@ -1935,47 +1834,36 @@ async fn run_migration_test(
 	let zitadel = open_zitadel_connection().await;
 
 	// Create user in Zitadel
-	let user = ImportHumanUserRequest {
-		user_name: user_name.to_owned(),
-		profile: Some(Profile {
-			first_name: "Test".to_owned(),
-			last_name: "User".to_owned(),
-			display_name: "User, Test".to_owned(),
-			gender: Gender::Unspecified.into(),
-			nick_name: initial_nick_name.clone(),
-			preferred_language: String::default(),
-		}),
-		email: Some(Email { email: email.to_owned(), is_email_verified: true }),
-		phone: Some(Phone { phone: "+12345678901".to_owned(), is_phone_verified: true }),
-		password: String::default(),
-		hashed_password: None,
-		password_change_required: false,
-		request_passwordless_registration: false,
-		otp_code: String::default(),
-		idps: vec![],
-	};
-
 	let user_id = zitadel
-		.create_human_user(&config.zitadel.organization_id, user)
+		.create_test_human_user(
+			&config.zitadel.organization_id,
+			user_name,
+			"Test",
+			"User",
+			"User, Test",
+			&initial_nick_name,
+			email,
+			"+12345678901",
+		)
 		.await
 		.expect("Failed to create user");
 
 	zitadel
 		.set_user_metadata(
-			Some(&config.zitadel.organization_id),
-			user_id.clone(),
-			"localpart".to_owned(),
+			&user_id,
+			"localpart",
 			"irrelevant",
+			Some(config.zitadel.organization_id.clone()),
 		)
 		.await
 		.expect("Failed to set user localpart");
 
 	zitadel
 		.set_user_metadata(
-			Some(&config.zitadel.organization_id),
-			user_id.clone(),
-			"preferred_username".to_owned(),
+			&user_id,
+			"preferred_username",
 			"irrelevant",
+			Some(config.zitadel.organization_id.clone()),
 		)
 		.await
 		.expect("Failed to set user preferred name");
@@ -1983,10 +1871,10 @@ async fn run_migration_test(
 	zitadel
 		.add_user_grant(
 			Some(config.zitadel.organization_id.clone()),
-			user_id,
+			&user_id,
 			config.zitadel.project_id.clone(),
 			None,
-			vec![FAMEDLY_USER_ROLE.to_owned()],
+			Some(vec![FAMEDLY_USER_ROLE.to_owned()]),
 		)
 		.await
 		.expect("Failed to create user grant");
@@ -2001,20 +1889,14 @@ async fn run_migration_test(
 		.expect("Failed to get user")
 		.expect("User not found");
 
-	match user.r#type {
-		Some(user_type) => {
-			if let UserType::Human(human) = user_type {
-				let profile = human.profile.expect("User lacks profile");
-				assert_eq!(
-					profile.nick_name, expected_nick_name,
-					"Nickname encoding mismatch for user '{email}'"
-				);
-			} else {
-				panic!("User is not of type Human for user '{email}'");
-			}
-		}
-		None => panic!("User type is None for user '{email}'"),
-	}
+	let human =
+		user.human().unwrap_or_else(|| panic!("User is not of type Human for user '{email}'"));
+	let profile = human.profile().expect("User lacks profile");
+	assert_eq!(
+		profile.nick_name().map(String::as_str),
+		Some(expected_nick_name.as_str()),
+		"Nickname encoding mismatch for user '{email}'"
+	);
 }
 
 /// Helper function to run the migration binary.
