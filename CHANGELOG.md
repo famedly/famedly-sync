@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2026-09-29
+
+### Bug Fixes
+
+- *(docker)* Update base image
+
 ## [0.13.0] - 2026-09-11
 
 ### Bug Fixes
