@@ -1817,7 +1817,8 @@ async fn test_e2e_sync_user_already_exists_error_case() {
 /// Open a connection to the configured Zitadel backend
 async fn open_zitadel_connection() -> Zitadel {
 	let zitadel_config = ldap_config().await.zitadel.clone();
-	Zitadel::new(zitadel_config.url, zitadel_config.key_file, None)
+	let reqwest_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new()).build();
+	Zitadel::new(reqwest_client, zitadel_config.url, zitadel_config.key_file, None)
 		.await
 		.expect("failed to set up Zitadel client")
 }

@@ -52,9 +52,7 @@ impl Zitadel<'_> {
 					self.zitadel_config.url.clone(),
 					&self.zitadel_config.key_file,
 					reqwest_middleware::ClientBuilder::new(
-						reqwest_middleware::reqwest::Client::builder()
-							.timeout(Duration::from_secs(10))
-							.build()?,
+						reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?,
 					)
 					.build(),
 					None,

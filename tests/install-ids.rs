@@ -77,9 +77,15 @@ async fn test_e2e_install_missing_ids() {
 	cleanup_test_users(config).await;
 
 	let mut ldap = Ldap::new().await;
-	let zitadel = Zitadel::new(config.zitadel.url.clone(), config.zitadel.key_file.clone(), None)
-		.await
-		.expect("Zitadel connection must succeed");
+	let reqwest_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new()).build();
+	let zitadel = Zitadel::new(
+		reqwest_client,
+		config.zitadel.url.clone(),
+		config.zitadel.key_file.clone(),
+		None,
+	)
+	.await
+	.expect("Zitadel connection must succeed");
 
 	let user_with_missing_id = AddHumanUserRequest::new(
 		SetHumanProfile::new("Max".to_owned(), "Mustermann".to_owned())
@@ -147,9 +153,15 @@ async fn test_e2e_install_ids_with_errors() {
 	cleanup_test_users(config).await;
 
 	let mut ldap = Ldap::new().await;
-	let zitadel = Zitadel::new(config.zitadel.url.clone(), config.zitadel.key_file.clone(), None)
-		.await
-		.expect("Zitadel connection must succeed");
+	let reqwest_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new()).build();
+	let zitadel = Zitadel::new(
+		reqwest_client,
+		config.zitadel.url.clone(),
+		config.zitadel.key_file.clone(),
+		None,
+	)
+	.await
+	.expect("Zitadel connection must succeed");
 
 	let org_id = config.zitadel.organization_id.clone();
 	let project_id = config.zitadel.project_id.clone();

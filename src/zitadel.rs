@@ -69,10 +69,15 @@ impl<'s> Zitadel<'s> {
 		feature_flags: FeatureFlags,
 		skipped_errors: &'s SkippedErrors,
 	) -> Result<Self> {
-		let zitadel_client =
-			ZitadelClient::new(zitadel_config.url.clone(), zitadel_config.key_file.clone(), None)
-				.await
-				.context("failed to configure zitadel_client")?;
+		let reqwest_client = reqwest_middleware::ClientBuilder::new(reqwest::Client::new()).build();
+		let zitadel_client = ZitadelClient::new(
+			reqwest_client,
+			zitadel_config.url.clone(),
+			zitadel_config.key_file.clone(),
+			None,
+		)
+		.await
+		.context("failed to configure zitadel_client")?;
 
 		Ok(Self {
 			zitadel_config,
