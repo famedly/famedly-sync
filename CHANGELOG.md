@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.2] - 2026-10-23
+
+### Bug Fixes
+
+- *(deps)* Update zitadel-rust-client to fix VUL-29
+
 ## [0.13.1] - 2026-09-29
 
 ### Bug Fixes

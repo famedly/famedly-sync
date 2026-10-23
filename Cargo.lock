@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "famedly-sync"
-version = "0.13.1"
+version = "0.13.2"
 dependencies = [
  "anyhow",
  "anyhow_ext",
