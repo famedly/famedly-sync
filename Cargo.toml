@@ -1,6 +1,6 @@
 [package]
 name = "famedly-sync"
-version = "0.13.1"
+version = "0.13.2"
 authors = []
 edition = "2024"
 publish = false
@@ -34,7 +34,7 @@ tracing-subscriber = "0.3.18"
 url = "2.5.2"
 uuid = { version = "1.10.0", features = ["v5"] }
 wiremock = "0.6.2"
-zitadel-rust-client = { package = "famedly-zitadel-rust-client", version = "0.12", default-features = false }
+zitadel-rust-client = { package = "famedly-zitadel-rust-client", version = "0.16", default-features = false }
 
 [dependencies.reqwest]
 version = "*"
